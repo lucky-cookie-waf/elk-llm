@@ -1,0 +1,47 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+    ports:
+      - "9200:9200"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.12.0
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      - elasticsearch
+
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:8.12.0
+    user: root
+    depends_on:
+      - elasticsearch
+    volumes:
+      - ./modsec_logs:/var/log/modsec_logs
+      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml
+
+  flask-api:
+    build:
+      context: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+volumes:
+  esdata:
+  ollama_data:
