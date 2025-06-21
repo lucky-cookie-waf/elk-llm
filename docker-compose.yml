@@ -1,47 +1,98 @@
+version: '3.8'
+
+networks:
+  elk-network:
+    driver: bridge
+
 services:
+  # 1. ModSecurity Proxy (Flask + ModSecurity)
+  modsec-proxy:
+    build: ./modsec-proxy
+    container_name: modsec-proxy
+    ports:
+      - "80:80" # 외부에서 80 포트로 접근
+    volumes:
+      # modsec-logs 디렉토리를 ModSecurity 로그가 기록되는 경로에 볼륨 마운트
+      - ./modsec_logs:/var/log/apache2/
+    networks:
+      - elk-network
+
+  # 2. Filebeat
+  filebeat:
+    build: ./elk-stack/filebeat # Filebeat Dockerfile 경로
+    container_name: filebeat
+    volumes:
+      # ModSecurity 로그가 기록되는 경로를 공유
+      - ./modsec_logs:/var/log/apache2/
+      # Filebeat 설정 파일 마운트
+      - ./elk-stack/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    depends_on:
+      - elasticsearch # Elasticsearch가 먼저 시작되어야 함
+    networks:
+      - elk-network
+
+  # 3. Elasticsearch
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.12.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    container_name: elasticsearch
     environment:
       - discovery.type=single-node
-      - xpack.security.enabled=false
+      - xpack.security.enabled=false # 개발/테스트용. 실제 운영에서는 보안 활성화 필수!
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m # 메모리 설정 (필요에 따라 조정)
     ports:
       - "9200:9200"
+      - "9300:9300"
     volumes:
-      - esdata:/usr/share/elasticsearch/data
+      # Elasticsearch 데이터 지속성을 위한 볼륨 마운트 (데이터 유실 방지)
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - elk-network
 
+  # 4. Kibana
   kibana:
-    image: docker.elastic.co/kibana/kibana:8.12.0
+    image: docker.elastic.co/kibana/kibana:8.13.4 # Elasticsearch와 동일 버전
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200 # Elasticsearch 서비스 이름 사용
     ports:
       - "5601:5601"
-    environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     depends_on:
       - elasticsearch
+    networks:
+      - elk-network
 
-  filebeat:
-    image: docker.elastic.co/beats/filebeat:8.12.0
-    user: root
-    depends_on:
-      - elasticsearch
-    volumes:
-      - ./modsec_logs:/var/log/modsec_logs
-      - ./filebeat.yml:/usr/share/filebeat/filebeat.yml
-
-  flask-api:
-    build:
-      context: .
-    ports:
-      - "8000:8000"
-    volumes:
-      - .:/app
-
+  # 5. Ollama
   ollama:
-    image: ollama/ollama
+    image: ollama/ollama:latest # 최신 Ollama 이미지 사용
+    container_name: ollama
     ports:
-      - "11434:11434"
+      - "11434:11434" # Ollama API 포트
     volumes:
-      - ollama_data:/root/.ollama
+      # Ollama 모델 저장소 (모델 다운로드 후 컨테이너 재시작해도 유지)
+      - ollama_models:/root/.ollama
+    networks:
+      - elk-network
+    # 명령어로 특정 모델을 자동으로 pull하려면 아래 주석 해제 (단, 첫 실행 시 시간이 오래 걸릴 수 있음)
+    # command: ["/bin/bash", "-c", "ollama pull llama3 && ollama serve"]
+
+
+  # 6. Flask API (AI Log Analyzer)
+  ai-log-analyzer:
+    build: ./ai-log-analyzer # AI Log Analyzer Dockerfile 경로
+    container_name: ai-log-analyzer
+    environment:
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+      - OLLAMA_API_URL=http://ollama:11434/api/generate
+      - LLM_MODEL_NAME=llama3 # 사용할 LLM 모델 이름 (Ollama에 미리 pull 되어 있어야 함)
+    ports:
+      - "5000:5000" # 외부에서 5000 포트로 접근
+    depends_on:
+      - elasticsearch
+      - ollama
+    networks:
+      - elk-network
 
 volumes:
-  esdata:
-  ollama_data:
+  es_data: # Elasticsearch 데이터 볼륨
+  ollama_models: # Ollama 모델 볼륨
