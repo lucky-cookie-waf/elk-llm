@@ -1,0 +1,28 @@
+filebeat.inputs:
+  - type: log
+    enabled: true
+    paths:
+      - /var/log/apache2/modsec_audit.log
+    # multiline.pattern: '^\-\-'
+    # multiline.negate: true
+    # multiline.match: after
+    json.keys_under_root: true
+    json.add_error_key: true
+    json.overwrite_keys: true
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+
+# Elasticsearch 인덱스 관리 설정 (ILM)
+setup.ilm:
+  enabled: true
+  rollover_alias: "filebeat"
+  pattern: "{now/d}-000001"
+
+processors:
+  - add_fields:
+      target: ''
+      fields:
+        type: modsecurity_log
+  - add_tags:
+      tags: [modsecurity]
