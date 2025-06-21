@@ -1,5 +1,3 @@
-version: '3.8'
-
 networks:
   elk-network:
     driver: bridge
@@ -10,7 +8,7 @@ services:
     build: ./modsec-proxy
     container_name: modsec-proxy
     ports:
-      - "80:80" # 외부에서 80 포트로 접근
+      - "8080:80" # 외부에서 80 포트로 접근
     volumes:
       # modsec-logs 디렉토리를 ModSecurity 로그가 기록되는 경로에 볼륨 마운트
       - ./modsec_logs:/var/log/apache2/
@@ -19,15 +17,13 @@ services:
 
   # 2. Filebeat
   filebeat:
-    build: ./elk-stack/filebeat # Filebeat Dockerfile 경로
+    build: ./elk-stack/filebeat
     container_name: filebeat
     volumes:
-      # ModSecurity 로그가 기록되는 경로를 공유
       - ./modsec_logs:/var/log/apache2/
-      # Filebeat 설정 파일 마운트
-      - ./elk-stack/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    entrypoint: "filebeat -e --strict.perms=false -c /tmp/filebeat_config/filebeat.yml" # <-- 이 줄을 추가 (경로 주의!)
     depends_on:
-      - elasticsearch # Elasticsearch가 먼저 시작되어야 함
+      - elasticsearch
     networks:
       - elk-network
 
