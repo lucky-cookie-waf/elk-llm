@@ -20,10 +20,13 @@ services:
     build: ./elk-stack/filebeat
     container_name: filebeat
     volumes:
-      - ./modsec_logs:/var/log/apache2/
-    entrypoint: "filebeat -e --strict.perms=false -c /tmp/filebeat_config/filebeat.yml" # <-- 이 줄을 추가 (경로 주의!)
+      - ./modsec_logs:/var/log/apache2/:ro
+      - ./elk-stack/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+    entrypoint: "filebeat -e --strict.perms=false -c /usr/share/filebeat/filebeat.yml"
     depends_on:
       - elasticsearch
+      - modsec-proxy
+    restart: on-failure
     networks:
       - elk-network
 
@@ -43,6 +46,12 @@ services:
       - es_data:/usr/share/elasticsearch/data
     networks:
       - elk-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # 4. Kibana
   kibana:
