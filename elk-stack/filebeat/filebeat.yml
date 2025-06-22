@@ -1,21 +1,20 @@
-filebeat.modules:
-- module: apache
-  access:
-    enabled: false
-  error:
-    enabled: false
-  audit:
-    enabled: true
-    var.paths: ["/var/log/apache2/modsec_audit.log"]
+logging.level: debug
+logging.selectors: ["*"]
+
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /var/log/apache2/modsec_audit.log
+  tail_files: true
+  multiline:
+    pattern: '^--[0-9a-f]{8}-A--'
+    negate: true
+    match: after
 
 output.elasticsearch:
   hosts: ["http://elasticsearch:9200"]
-
-setup.ilm:
-  enabled: true
-  policy_name: "filebeat"
-  rollover_alias: "filebeat"
-  pattern: "{now/d}-000001"
+  # pipeline: "modsec-audit-parser-v1"
 
 processors:
   - add_host_metadata: ~

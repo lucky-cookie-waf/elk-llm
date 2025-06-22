@@ -21,14 +21,15 @@ services:
     container_name: filebeat
     volumes:
       - ./modsec_logs:/var/log/apache2/:ro
-      - ./elk-stack/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
-    entrypoint: "filebeat -e --strict.perms=false -c /usr/share/filebeat/filebeat.yml"
     depends_on:
-      - elasticsearch
-      - modsec-proxy
+      elasticsearch:
+        condition: service_healthy
+      modsec-proxy:
+        condition: service_started
     restart: on-failure
     networks:
       - elk-network
+    user: root
 
   # 3. Elasticsearch
   elasticsearch:
