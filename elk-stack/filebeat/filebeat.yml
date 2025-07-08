@@ -1,4 +1,4 @@
-a###################### Filebeat Configuration Example #########################
+###################### Filebeat Configuration Example #########################
 
 # This file is an example configuration file highlighting only the most common
 # options. The filebeat.reference.yml file from the same directory contains all the
@@ -30,14 +30,13 @@ filebeat.inputs:
   paths:
     - /var/log/apache2/modsec_audit.log
     #- c:\programdata\elasticsearch\logs\*
-  json.keys_under_root: true
-  json.add_error_key: true
-  
+    #  json.keys_under_root: true
+    #  json.add_error_key: true
+ 
   fields:
     log_type: modsecurity
   fields_under_root: true
-  # Exclude lines. A list of regular expressions to match. It drops the lines that are
-  # matching any regular expression from the list.
+
   # Line filtering happens after the parsers pipeline. If you would like to filter lines
   # before parsers, use include_message parser.
   #exclude_lines: ['^DBG']
@@ -138,7 +137,7 @@ setup.kibana:
   # Scheme and port can be left out and will be set to the default (http and 5601)
   # In case you specify and additional path, the scheme is required: http://localhost:5601/path
   # IPv6 addresses should always be defined as: https://[2001:db8::1]:5601
-  host: "localhost:5601"
+  host: "kibana:5601"
 
   # Kibana Space ID
   # ID of the Kibana Space into which the dashboards should be loaded. By default,
@@ -165,7 +164,7 @@ setup.kibana:
 # ---------------------------- Elasticsearch Output ----------------------------
 output.elasticsearch:
   # Array of hosts to connect to.
-  hosts: ["localhost:9200"]
+  hosts: ["elasticsearch:9200"]
 
   # Performance preset - one of "balanced", "throughput", "scale",
   # "latency", or "custom".
