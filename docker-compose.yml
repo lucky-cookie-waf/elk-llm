@@ -12,6 +12,8 @@ services:
     volumes:
       # modsec-logs 디렉토리를 ModSecurity 로그가 기록되는 경로에 볼륨 마운트
       - ./modsec_logs:/var/log/apache2/
+    security_opt:
+      - apparmor=unconfined
     networks:
       - elk-network
 
@@ -26,6 +28,8 @@ services:
         condition: service_healthy
       modsec-proxy:
         condition: service_started
+    security_opt:
+      - apparmor=unconfined
     restart: on-failure
     networks:
       - elk-network
@@ -33,18 +37,21 @@ services:
 
   # 3. Elasticsearch
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.4
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.17.0
     container_name: elasticsearch
     environment:
       - discovery.type=single-node
       - xpack.security.enabled=false # 개발/테스트용. 실제 운영에서는 보안 활성화 필수!
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m # 메모리 설정 (필요에 따라 조정)
+      - ES_JAVA_OPTS=-XX:UseSVE=0 # 메모리 설정 (필요에 따라 조정)
+      - CLI_JAVA_OPTS=-XX:UseSVE=0
     ports:
       - "9200:9200"
       - "9300:9300"
     volumes:
       # Elasticsearch 데이터 지속성을 위한 볼륨 마운트 (데이터 유실 방지)
       - es_data:/usr/share/elasticsearch/data
+    security_opt:
+      - apparmor=unconfined
     networks:
       - elk-network
     healthcheck:
@@ -56,14 +63,16 @@ services:
 
   # 4. Kibana
   kibana:
-    image: docker.elastic.co/kibana/kibana:8.13.4 # Elasticsearch와 동일 버전
+    image: docker.elastic.co/kibana/kibana:8.17.0 # Elasticsearch와 동일 버전
     container_name: kibana
     environment:
-      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200 # Elasticsearch 서비스 이름 사용
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
     ports:
       - "5601:5601"
     depends_on:
       - elasticsearch
+    security_opt:
+      - apparmor=unconfined
     networks:
       - elk-network
 
@@ -76,6 +85,8 @@ services:
     volumes:
       # Ollama 모델 저장소 (모델 다운로드 후 컨테이너 재시작해도 유지)
       - ollama_models:/root/.ollama
+    security_opt:
+      - apparmor=unconfined
     networks:
       - elk-network
     # 명령어로 특정 모델을 자동으로 pull하려면 아래 주석 해제 (단, 첫 실행 시 시간이 오래 걸릴 수 있음)
