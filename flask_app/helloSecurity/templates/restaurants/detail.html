@@ -1,0 +1,39 @@
+{% extends "layout.html" %}
+{% block title %}{{ restaurant.name }}{% endblock %}
+
+<!-- 상세 페이지 -->
+
+{% block content %}
+<div class="detail-wrapper">
+
+  <div class="info-card">
+    <h2>{{ restaurant.name }}</h2>
+
+    <p class="address">{{ restaurant.address }}</p>
+
+    <div class="meta">
+      <strong>브레이크 타임:</strong> {{ restaurant.break_time or '-' }}
+    </div>
+    <div class="meta">
+      <strong>별점</strong>: {{ restaurant.rating or '-' }}
+    </div>
+
+    <div class="tags">
+      {% for rel in restaurant.tags %}
+        <span class="tag-chip">{{ rel.tag.name }}</span>
+      {% endfor %}
+    </div>
+
+    <p class="desc">{{ restaurant.description }}</p>
+
+    <div class="actions">
+      <a href="{{ url_for('restaurants.edit', r_id=restaurant.id) }}" class="btn">수정</a>
+      <form action="{{ url_for('restaurants.delete', r_id=restaurant.id) }}"
+            method="post" style="display:inline;">
+        <button class="btn delete" onclick="return confirm('삭제할까요?')">삭제</button>
+      </form>
+      <a href="{{ url_for('restaurants.index') }}" class="btn secondary">← 목록</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

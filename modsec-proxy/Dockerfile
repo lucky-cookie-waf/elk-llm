@@ -7,12 +7,16 @@ RUN apt-get update
 RUN apt-get install -y --no-install-recommends \
     apache2 \
     libapache2-mod-security2 \
-    modsecurity-crs \
-    nodejs \
-    npm
+    git \
+    ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
 
-RUN rm -rf /var/lib/apt/lists/* \
-    && apt-get clean
+# CRS 설치
+RUN git clone --branch v3.2.0 --depth 1 https://github.com/coreruleset/coreruleset /opt/coreruleset && \
+    mkdir -p /etc/modsecurity/rules/crs/rules && \
+    cp /opt/coreruleset/crs-setup.conf.example /etc/modsecurity/rules/crs/crs-setup.conf && \
+    find /opt/coreruleset/rules -type f \( -name "*.conf" -o -name "*.data" \) -exec cp {} /etc/modsecurity/rules/crs/rules/ \; && \
+    rm -rf /opt/coreruleset
 
 # 로그 디렉토리 생성 및 권한 설정
 RUN mkdir -p /var/log/apache2 && \
@@ -25,11 +29,6 @@ RUN mkdir -p /etc/apache2/logs && \
 # 이 파일들은 modsec-proxy 디렉토리에 위치해야 합니다.
 COPY apache2.conf /etc/apache2/apache2.conf
 COPY modsecurity.conf /etc/modsecurity/modsecurity.conf
-
-WORKDIR /var/www/express_app
-COPY package.json .
-COPY app.js .
-RUN npm install --production
 
 # Apache 모듈 활성화
 RUN a2dismod mpm_event && \
@@ -44,4 +43,4 @@ RUN sed -i "s/ServerTokens OS/ServerTokens Prod/" /etc/apache2/conf-available/se
     a2enconf security
 
 # 컨테이너 시작 시 Apache를 포그라운드에서 실행
-CMD ["/bin/bash", "-c", "cd /var/www/express_app && npm start & apache2ctl -D FOREGROUND"]
+CMD ["apache2ctl", "-D", "FOREGROUND"]
