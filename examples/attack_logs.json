@@ -1,0 +1,20 @@
+{
+  "attack_type": "XSS",
+  "logs": [
+    {
+      "method": "GET",
+      "uri": "/search?q=<script>alert(1)</script>",
+      "headers": {
+        "User-Agent": "curl/7.68.0"
+      }
+    },
+    {
+      "method": "POST",
+      "uri": "/comment",
+      "body": "content=<img src=x onerror=alert('XSS')>",
+      "headers": {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    }
+  ]
+}
