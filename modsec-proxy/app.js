@@ -9,7 +9,7 @@ app.get('/', (req, res) => {
 
 app.get('/attack', (req, res) => {
     const param = req.query.param || 'No parameter provided';
-    res.send('You requested with parameter: ${param}');
+    res.send(`You requested with parameter: ${param}`);
 });
 
 app.get('/test', (req, res) => {
@@ -17,5 +17,5 @@ app.get('/test', (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log('Express app listening at http://localhost:${port}');
+    console.log(`Express app listening at http://localhost:${port}`);
 });
