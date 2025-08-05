@@ -1,25 +1,58 @@
-# ELK + LLM
-## 목적
-- ELK (Elasticsearch + Kibana + Filebeat)와 LLM 서버 실행 환경을 Docker로 통합 관리합니다.
-- Filebeat는 공유된 로그 디렉토리에서 ModSecurity 로그를 실시간 수집하여 Elasticsearch에 전달합니다.
-- Flask API는 AI 모델 및 LLM 서버와 연동 가능한 API 포트를 제공합니다.
+# Modsecurity+PostgreSQL
+ModSecurity 로그를 수집하고 PostgreSQL에 저장하는 Node.js 기반의 Log Collector입니다.
+Prisma ORM을 통해 DB 스키마를 정의하고, Docker Compose로 PostgreSQL과 함께 구동합니다.
 
-이 리포지토리는 **로그 수집 및 AI 연동 실험을 위한 환경 실행 전용**이며,  
-AI 모델, 세션 분석 파이프라인, 프롬프트 템플릿 등은 별도 리포지토리에서 관리합니다.
+프로젝트 구조
+.
+├── log_collector/
+│   ├── parser.js           # 로그 파싱 및 DB 저장 스크립트
+│   ├── prisma/
+│   │   └── schema.prisma   # Prisma DB schema
+│   ├── Dockerfile          # Node.js app Dockerfile
+│   ├── package.json        # 의존성 정보
+│   └── .env                # DB 접속 정보 (직접 생성 필요)
+├── docker-compose.yml      # 전체 서비스 정의
+└── README.md               # 문서
+- 실행 방법
+1. 레포 클론
 
-## 구성 요소
-- Filebeat: ModSecurity 로그 수집 (`modsec_audit.log`)
-- Elasticsearch: 수집된 로그 저장 및 검색
-- Kibana: 로그 시각화
-- Flask API: LLM 및 AI 모델 연동용 중간 API 서버
-- Ollama: LLM 실행서버
-
-## 실행 방법
-```
-git clone https://github.com/lucky-cookie-waf/elk-llm.git
+git clone https://github.com/your-org/elk-llm.git
 cd elk-llm
-docker compose up --build
-```
-- ModSecurity 컨테이너에서 생성되는 로그 파일을 Filebeat가 자동 수집하여 Elasticsearch로 전달합니다.
-- Kibana 대시보드: http://localhost:5601
-- Flask API 서버: http://localhost:8000
+
+2. .env 파일 설정
+.env.example을 복사해 .env를 만드세요.
+
+cp log_collector/.env.example log_collector/.env
+내용 예시:
+DATABASE_URL="postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs"
+
+3. Docker 컨테이너 실행
+
+docker-compose up -d
+이 명령어는 다음을 실행합니다:
+
+PostgreSQL DB 컨테이너
+
+Node.js 기반 log_collector 컨테이너
+
+4. Prisma 설정
+컨테이너 내부에 Prisma를 적용하려면 아래 명령어를 실행합니다:
+
+# log_collector 컨테이너 안으로 진입
+docker-compose exec log_collector sh
+
+# 컨테이너 안에서 아래 실행
+npx prisma db push
+npx prisma generate
+5. 로그 파서 실행
+컨테이너 내부에서 로그 파서를 수동 실행:
+
+node parser.js
+또는 CMD에 포함되어 자동 실행되도록 설정해도 됩니다.
+
+- 테스트용 로그 생성
+웹 브라우저 또는 curl로 요청을 보내면
+ModSecurity가 /var/log/apache2/modsec_audit.log에 기록하고
+parser.js가 이를 DB에 저장합니다.
+
+curl "http://localhost:8080/?test=../../etc/passwd"
