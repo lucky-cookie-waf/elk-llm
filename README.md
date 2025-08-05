@@ -2,18 +2,7 @@
 ModSecurity 로그를 수집하고 PostgreSQL에 저장하는 Node.js 기반의 Log Collector입니다.
 Prisma ORM을 통해 DB 스키마를 정의하고, Docker Compose로 PostgreSQL과 함께 구동합니다.
 
-프로젝트 구조
-.
-├── log_collector/
-│   ├── parser.js           # 로그 파싱 및 DB 저장 스크립트
-│   ├── prisma/
-│   │   └── schema.prisma   # Prisma DB schema
-│   ├── Dockerfile          # Node.js app Dockerfile
-│   ├── package.json        # 의존성 정보
-│   └── .env                # DB 접속 정보 (직접 생성 필요)
-├── docker-compose.yml      # 전체 서비스 정의
-└── README.md               # 문서
-- 실행 방법
+# 실행 방법
 1. 레포 클론
 
 git clone https://github.com/your-org/elk-llm.git
