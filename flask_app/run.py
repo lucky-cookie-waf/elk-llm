@@ -1,7 +1,9 @@
 # run.py
+from flask import Flask
 from helloSecurity import create_app
 
 app = create_app()
+
 
 if __name__ == "__main__":
     # 개발 단계에서는 debug=True 로 자동 재시작 활성화
