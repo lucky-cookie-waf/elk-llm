@@ -16,6 +16,6 @@ app.get('/test', (req, res) => {
     res.send('This is a test endpoint');
 });
 
-app.listen(port, () => {
+app.listen(port, '0.0.0.0', () => {
     console.log(`Express app listening at http://localhost:${port}`);
 });
