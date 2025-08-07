@@ -1,0 +1,25 @@
+{
+  "name": "log_collector",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A log parser and collector for ModSecurity audit logs",
+  "main": "parser.js",
+  "scripts": {
+    "dev": "node index.js",
+    "parse": "node parser.js",
+    "generate": "prisma generate",
+    "migrate": "prisma migrate dev",
+    "studio": "prisma studio"
+  },
+  "author": "yourname",
+  "license": "MIT",
+  "dependencies": {
+    "@prisma/client": "^5.6.0",
+    "dotenv": "^16.3.1",
+    "fs-extra": "^11.1.1",
+    "fast-glob": "^3.3.1"
+  },
+  "devDependencies": {
+    "prisma": "^5.6.0"
+  }
+}

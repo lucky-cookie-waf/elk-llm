@@ -1,0 +1,59 @@
+generator client {
+    provider = "prisma-client-js"
+    //output = "../generated/prisma"
+}
+
+datasource db {
+    provider = "postgresql"
+    url      = env("DATABASE_URL")
+}
+
+model RawLog {
+  id               Int      @id @default(autoincrement())
+  transaction_id   String   @unique                     // --xxxxx-- 식별자
+  timestamp        DateTime                            // A: 요청 시각
+  remote_host      String?                             // A: 클라이언트 IP
+  remote_port      Int?                                // A
+  local_host       String?                             // A: 서버 IP
+  local_port       Int?                                // A
+  method           String?                             // A
+  uri              String?                             // A
+  http_version     String?                             // A
+  host             String?                             // A
+  user_agent       String?                             // A
+
+  request_headers  Json?                               // I: 요청 헤더 전체
+  request_body     String?                             // B: 요청 바디
+  response_headers Json?                               // J: 응답 헤더 전체
+  response_body    String?                             // (선택) 응답 바디
+
+  matched_rules    Json?                               // F 또는 H의 일부: 탐지된 룰 상세
+  audit_summary    Json?                               // H: 요약 정보
+  full_log         Json                                // 전체 로그(raw JSON)
+  created_at       DateTime @default(now())            // 생성 시간
+}
+
+model Session {
+  id           Int      @id @default(autoincrement())
+  session_id   String   @unique
+  ip_address   String?
+  user_agent   String?
+  start_time   DateTime
+  end_time     DateTime
+  created_at   DateTime @default(now())
+}
+
+model Rule {
+  id             Int      @id @default(autoincrement())
+  rule_id        Int      @unique                      // ModSecurity rule id
+  created_at     DateTime @default(now())
+  rule_name      String                                // msg 필드에서 추출
+  target         String                                // REQUEST_URI, ARGS:content 등
+  operator       String                                // "@rx ..." 전체
+  phase          Int                                   // 처리 단계 (보통 1 또는 2)
+  action         String                                // block, deny 등
+  transformation String?                               // t:none 등
+  severity_level String                                // CRITICAL, HIGH, MEDIUM 등
+  logdata        String?                               // logdata 필드 원문
+  rule_template  Json                                  // 전체 raw 템플릿 저장 (원본 백업용)
+}
