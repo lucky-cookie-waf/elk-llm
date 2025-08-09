@@ -39,6 +39,11 @@ services:
       - pgdata:/var/lib/postgresql/data
     networks:
       - web-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U luckycookie -d modsec_logs -h localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   log_collector:
     build: ./log_collector
@@ -52,6 +57,23 @@ services:
       - postgres
     volumes:
       - ./modsec_logs:/var/log/apache2/
+      - ./:/app #프로젝트 소스 마운트
+    working_dir: /app/log_collector #기본 작업 디렉토리 고정
+  
+  prisma-runner:
+    image: node:20-alpine
+    container_name: prisma-runner
+    working_dir: /app
+    volumes:
+      - ./:/app              # 소스/스키마 마운트
+    env_file:
+      - ./.env               # DATABASE_URL=postgres://...(host는 postgres)
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - web-network
+    command: ["sh","-lc","node -v"]  # 필요 시 커맨드 덮어쓰기
 
 volumes:
   pgdata: {}
