@@ -9,17 +9,21 @@
     "parse": "node parser.js",
     "generate": "prisma generate",
     "migrate": "prisma migrate dev",
-    "studio": "prisma studio"
+    "studio": "prisma studio",
+
+    "db:gen": "prisma generate --schema=prisma/schema.prisma",
+    "db:studio": "prisma studio --schema=prisma/schema.prisma",
+    "test:smoke:session-label": "node scripts/session-label-smoke.js"
   },
   "author": "yourname",
   "license": "MIT",
   "dependencies": {
-    "@prisma/client": "^5.6.0",
+    "@prisma/client": "^5.22.0",
     "dotenv": "^16.3.1",
     "fs-extra": "^11.1.1",
     "fast-glob": "^3.3.1"
   },
   "devDependencies": {
-    "prisma": "^5.6.0"
+    "prisma": "^5.22.0"
   }
 }
