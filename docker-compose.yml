@@ -57,6 +57,7 @@ services:
       - postgres
     volumes:
       - ./modsec_logs:/var/log/apache2/
+      # - ./log_collector:/app/log_collector
       - ./:/app #프로젝트 소스 마운트
     working_dir: /app/log_collector #기본 작업 디렉토리 고정
   
@@ -74,6 +75,23 @@ services:
     networks:
       - web-network
     command: ["sh","-lc","node -v"]  # 필요 시 커맨드 덮어쓰기
+
+  gen_rule:
+    build: ./gen_rule
+    container_name: gen_rule
+    restart: "no"
+    env_file:
+      - ./gen_rule/.env
+    networks:
+      - web-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+      - ./rules:/app/rules
+    working_dir: /app/gen_rule
+    command: ["python", "main.py"]
 
 volumes:
   pgdata: {}

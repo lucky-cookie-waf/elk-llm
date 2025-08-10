@@ -2,7 +2,7 @@
 FROM node:18
 
 # 작업 디렉토리 설정
-WORKDIR /app
+WORKDIR /app/log_collector
 
 # 의존성 먼저 복사 및 설치
 COPY package*.json ./
