@@ -7,20 +7,51 @@ services:
     build: ./flask_app
     container_name: flask-app
     restart: always
+    env_file:
+      - ./flask_app/.env
     networks:
       - web-network
-    
-
 
   modsec-proxy:
     build: ./modsec-proxy
     container_name: modsec-proxy
     restart: always
     ports:
-      - "5000:5000"
+      - "8080:80"
     volumes:
       - ./modsec_logs:/var/log/apache2/
     networks:
       - web-network
     depends_on:
       - flask-app
+  
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: luckycookie
+      POSTGRES_PASSWORD: luckycookie
+      POSTGRES_DB: modsec_logs
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - web-network
+
+  log_collector:
+    build: ./log_collector
+    container_name: log_collector
+    restart: always
+    env_file:
+      - ./log_collector/.env
+    networks:
+      - web-network
+    depends_on:
+      - postgres
+    volumes:
+      - ./modsec_logs:/var/log/apache2/
+
+volumes:
+  pgdata: {}
