@@ -8,6 +8,13 @@ datasource db {
     url      = env("DATABASE_URL")
 }
 
+enum sessionLabel {
+  NORMAL
+  MALICIOUS
+
+  @@map("SessionLabel") //DB 실제 enum 타입명과 매핑
+}
+
 model RawLog {
   id               Int      @id @default(autoincrement())
   transaction_id   String   @unique                     // --xxxxx-- 식별자
@@ -31,6 +38,12 @@ model RawLog {
   audit_summary    Json?                               // H: 요약 정보
   full_log         Json                                // 전체 로그(raw JSON)
   created_at       DateTime @default(now())            // 생성 시간
+
+  // FK + relation
+  sessionId        Int?
+  session          Session? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
+  @@index([sessionId])
 }
 
 model Session {
@@ -41,6 +54,10 @@ model Session {
   start_time   DateTime
   end_time     DateTime
   created_at   DateTime @default(now())
+
+  //분류 결과 저장 (처음에는 null -> 분류 후 값을 채움)
+  label        sessionLabel?
+  rawLogs      RawLog [] //역참조 
 }
 
 model Rule {
