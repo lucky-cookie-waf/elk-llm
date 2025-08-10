@@ -1,0 +1,96 @@
+{% extends 'layout.html' %}
+{% block title %}맛집 목록{% endblock %}
+{% block content %}
+
+<!DOCTYPE html>
+
+  <!-- 별점이 일정 수 이상인 목록만 필터링 -->
+
+  <h3>별점이 좋은</h3>
+
+  <table id="high-table">
+    <thead>
+    <tr>
+      <th>이름</th>
+      <th>주소</th>
+      <th>브레이크 타임</th>
+      <th>태그</th>
+    </tr>
+  </thead>
+  <tbody id="result-body">
+    {% for f in filtered %}
+    <tr data-tags="{% for rel in f.tags %}{{ rel.tag.name }} {% endfor %}">
+      <td><a href="{{ url_for('restaurants.detail', r_id=f.id) }}">{{ f.name }}</a></td>
+      <td>{{ f.address }}</td>
+      <td>{{ f.break_time or '-' }}</td>
+      <td>
+        {% for rel in f.tags %}
+          <span class="tag">{{ rel.tag.name }}</span>
+        {% endfor %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  </table>
+
+  <!-- 태그 선택 -->
+
+  <form method="get" action="{{ url_for('restaurants.index') }}" id ="tag-form">
+  <div class="tag-area">
+    <strong>태그별</strong>
+    <div class="categories">
+    {% for cat in categories %}
+    <fieldset>
+      <legend>{{ cat.name }}</legend>
+      <div class="tag-checkbox-group">
+        {% for tag in cat.tags %}
+          <div class="tag-checkbox">
+            <input type="checkbox"
+                  id="tag-{{ tag.id }}"
+                  name="tags"
+                  value="{{ tag.id }}"
+                  {% if tag.id in selected %}checked{% endif %}>
+            <label for="tag-{{ tag.id }}">{{ tag.name }}</label>
+          </div>
+        {% endfor %}
+      </div>
+    </fieldset>
+  {% endfor %}
+    </div>
+  </div>
+</form>
+
+  <!-- 검색 결과 -->
+  <!-- 태그가 있을 때는 태그에 해당되는 것만, 아닐 때는 전부 -->
+  <h3>검색 결과</h3>
+  <table id="result-table">
+  <thead>
+    <tr>
+      <th>이름</th>
+      <th>주소</th>
+      <th>브레이크 타임</th>
+      <th>태그</th>
+    </tr>
+  </thead>
+
+  <tbody id="result-body">
+    {% for r in restaurants %}
+    <tr data-tags="{% for rel in r.tags %}{{ rel.tag.name }} {% endfor %}">
+      <td><a href="{{ url_for('restaurants.detail', r_id=r.id) }}">{{ r.name }}</a></td>
+      <td>{{ r.address }}</td>
+      <td>{{ r.break_time or '-' }}</td>
+      <td>
+        {% for rel in r.tags %}
+          <span class="tag">{{ rel.tag.name }}</span>
+        {% endfor %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+  <div class="bottom-bar" style="margin-top: 40px;">
+    <a class="btn" href="{{ url_for('restaurants.create') }}">글쓰기</a>
+  </div>
+
+{% endblock %}

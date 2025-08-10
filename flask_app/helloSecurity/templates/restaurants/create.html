@@ -1,0 +1,66 @@
+<!-- write.html -->
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <title>글쓰기 - 벗들의 민족</title>
+  <link href="../../static/css/style.css" rel="stylesheet" />
+</head>
+<body>
+  <form class="form-container" method="post">
+    <h2>새 글 작성</h2>
+    <label>이름</label>
+    <input name="name" value="{{ restaurant.name if restaurant else '' }}"><br>
+    <label>주소</label>
+    <input name="address" value="{{ restaurant.address if restaurant else '' }}"><br>
+    <label>설명</label>
+    <textarea name="description">{{ restaurant.description if restaurant else '' }}</textarea><br>
+    <label>별점</label>
+    <input name="rating" value="{{restaurant.rating if restaurant else ''}}">
+    <label>영업 시작시간</label>
+    <input name="start_hour" type="time" value="{{restaurant.start_hour if restaurant else ''}}">
+    <label>영업 종료시간</label>
+    <input name="end_hour" type="time" value="{{restaurant.end_hour if restaurant else ''}}">
+    <label>브레이크타임</label>
+    <input name="breaktime" value="{{restaurant.break_time if restaurant else ''}}">
+
+    <label>태그</label>
+
+  {% for cat in categories %}
+  <fieldset>
+    <legend>{{ cat.name }}</legend>
+    <div class="tag-checkbox-group">
+      {% for tag in cat.tags %}
+        <div class="tag-checkbox">
+          <input type="checkbox"
+                 id="tag-{{ tag.id }}"
+                 name="tags"
+                 value="{{ tag.id }}"
+                 {% if restaurant and tag.id in attached %}checked{% endif %}>
+          <label for="tag-{{ tag.id }}">{{ tag.name }}</label>
+        </div>
+      {% endfor %}
+    </div>
+  </fieldset>
+{% endfor %}
+
+    <button id="submit-btn" class="btn" type="submit">등록</button>
+</form>
+
+  <script>
+    document.getElementById('submit-btn').addEventListener('click', () => {
+      const name = document.getElementById('input-name').value.trim();
+      const tag = document.getElementById('input-tag').value;
+      const type = document.getElementById('input-type').value.trim();
+      const breakTime = document.getElementById('input-break').value.trim();
+
+      if (name && tag && type) {
+        alert(`등록 완료!\n\n이름: ${name}\n태그: ${tag}\n종류: ${type}\n브레이크 타임: ${breakTime || '-'}`);
+        window.location.href = 'index.html';  // 등록 후 메인으로 이동
+      } else {
+        alert('모든 입력을 채워주세요!');
+      }
+    });
+  </script>
+</body>
+</html>
