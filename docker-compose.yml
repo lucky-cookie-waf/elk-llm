@@ -75,5 +75,18 @@ services:
       - web-network
     command: ["sh","-lc","node -v"]  # 필요 시 커맨드 덮어쓰기
 
+    ai-server:
+      build: ./ai-server
+      container_name: ai-server
+      start: always
+      ports:
+        - "3001:3001"
+      env_file:
+        - ./ai_server/.env
+      networks:
+        - web-network
+      depends_on:
+        - postgres
+
 volumes:
   pgdata: {}
