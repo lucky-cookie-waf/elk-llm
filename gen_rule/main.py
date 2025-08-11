@@ -11,6 +11,7 @@ load_dotenv()
 RULE_FILE_PATH = os.getenv("RULE_FILE_PATH")
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+
 def fetch_malicious_logs_from_db():
     """
     MALICIOUS로 라벨링된 세션의 로그를 데이터베이스에서 가져옵니다.
@@ -19,7 +20,7 @@ def fetch_malicious_logs_from_db():
     cur = conn.cursor()
     
     # MALICIOUS 세션과 연결된 RawLog들을 가져오는 쿼리
-    query = """
+    query = """ 
     SELECT 
         rl.method,
         rl.uri,
@@ -32,10 +33,11 @@ def fetch_malicious_logs_from_db():
         s.ip_address,
         s.user_agent
     FROM "RawLog" rl
-    JOIN "Session" s ON rl.sessionId = s.id
+    JOIN "Session" s ON rl."sessionId" = s.id
     WHERE s.label = 'MALICIOUS'
     ORDER BY rl.timestamp ASC
-    """
+"""
+
     
     cur.execute(query)
     rows = cur.fetchall()

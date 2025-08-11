@@ -1,9 +1,9 @@
-from openai import OpenAI
+import openai
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def is_rule_duplicate(new_rule: str, existing_rules_path: str) -> bool:
     """
@@ -67,8 +67,8 @@ SecRule REQUEST_URI "@rx malicious_pattern" \
 Return only the rule without any additional explanation.
     """
 
-    response = client.chat.completions.create(
-        model="gpt-4o",
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
         messages=[
             {"role": "system", "content": "You are a cybersecurity WAF expert specializing in ModSecurity rule creation."},
             {"role": "user", "content": prompt}

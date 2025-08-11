@@ -10,6 +10,8 @@ RUN apt-get update && apt-get install -y \
 
 # Python 패키지 설치
 COPY requirements.txt .
+RUN pip install --upgrade pip
+RUN pip install --upgrade openai
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 애플리케이션 코드 복사
