@@ -1,7 +1,7 @@
 // sessionizing.js (Idempotent / ESM)
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
-import { UAParser } from 'ua-parser-js';
+import UAParser from 'ua-parser-js';
 
 const prisma = new PrismaClient();
 
@@ -29,41 +29,38 @@ function heuristicLabel(sampleTexts) {
   return { label: 'NORMAL', confidence: 0.55 };
 }
 
-// 분류기 라벨 → Prisma enum(sessionLabel)로 매핑
 function mapClassifierLabel(raw) {
   if (!raw) return null;
   const s = String(raw).toLowerCase();
   if (s === 'malicious' || s === 'attack' || s === 'bad') return 'MALICIOUS';
   if (s === 'benign' || s === 'normal' || s === 'good') return 'NORMAL';
-  return null; // unknown/미분류 시 null 저장
+  return null;
 }
 
 async function classifySession(sessionSummary) {
   try {
     const { data } = await axios.post(CLASSIFIER_ENDPOINT, { session: sessionSummary }, { timeout: 5000 });
     if (data && data.label) return { label: data.label, confidence: data.confidence ?? null };
-  } catch { /* 분류기 실패 시 휴리스틱 사용 */ }
+  } catch {}
   return heuristicLabel([...(sessionSummary.paths || []), ...(sessionSummary.samples || [])]);
 }
 
 async function run() {
   console.log('[*] Sessionizing start');
 
-  // 진행 중 세션 상태: key = `${remote_host}|${agent_group}`
-  const active = new Map();
-  let processed = 0;
+  const active = new Map(); // key = `${remote_port}|${agent_group}`
   let batchNo = 0;
+  let lastId = 0; // 커서
 
-  // 세션 확정 저장 + RawLog FK 연결 (트랜잭션)
   async function flushSession(key) {
     const s = active.get(key);
     if (!s) return;
 
     const summary = {
-      ip: s.remote_host || null,
-      user_agent: s.user_agent || null,
-      start_time: s.start, // Date
-      end_time: s.end,     // Date
+      port: s.port ?? null,
+      user_agent: s.user_agent ?? null,
+      start_time: s.start,
+      end_time: s.end,
       count: s.count,
       paths: Array.from(s.paths).slice(0, 100),
       methods: Array.from(s.methods),
@@ -71,20 +68,18 @@ async function run() {
     };
 
     const clf = await classifySession(summary);
-    const label = mapClassifierLabel(clf?.label); // 'MALICIOUS' | 'NORMAL' | null
-
-    // 사람이 보는 세션 문자열(재현 가능하게)
-    const sessionIdStr = `${s.remote_host || 'unknown'}|${s.agent_group}|${s.start.toISOString()}`;
+    const label = mapClassifierLabel(clf?.label);
+    const sessionIdStr = `${s.port ?? 'NA'}|${s.agent_group}|${s.start.toISOString()}`;
 
     await prisma.$transaction(async (tx) => {
       const created = await tx.session.create({
         data: {
-          session_id: sessionIdStr,          // String @unique
-          ip_address: s.remote_host || null, // String?
-          user_agent: s.user_agent || null,  // String?
-          start_time: s.start,               // Date
-          end_time: s.end,                   // Date
-          label,                             // enum sessionLabel?
+          session_id: sessionIdStr,
+          ip_address: s.remote_host ?? null,    // 참고용으로 유지
+          user_agent: s.user_agent ?? null,
+          start_time: s.start,
+          end_time: s.end,
+          label,
         },
         select: { id: true }
       });
@@ -92,7 +87,7 @@ async function run() {
       if (s.rawLogIds.length) {
         await tx.rawLog.updateMany({
           where: { id: { in: s.rawLogIds } },
-          data:  { sessionId: created.id },  // ✅ FK 채움 → 다음 실행 때 자동 제외됨
+          data:  { sessionId: created.id },
         });
       }
     });
@@ -100,44 +95,53 @@ async function run() {
     active.delete(key);
   }
 
-  // 배치 루프: "아직 세션에 속하지 않은 RawLog만" 처리 ⇒ idempotent
   while (true) {
     batchNo += 1;
 
     const rows = await prisma.rawLog.findMany({
-      where: { sessionId: null },           // ✅ 핵심: 이미 처리된 로그 제외
+      where: {
+        sessionId: null,
+        id: { gt: lastId },
+      },
       orderBy: { id: 'asc' },
       take: BATCH_SIZE,
       select: {
         id: true,
-        timestamp: true,     // DateTime
-        remote_host: true,   // 클라이언트 IP
-        user_agent: true,    // UA
+        timestamp: true,
+        remote_port: true,       // ✅ 클라이언트 포트
+        remote_host: true,
+        user_agent: true,
         method: true,
         uri: true,
         request_body: true,
+        // local_port: true,     // 필요 시 사용
       },
     });
 
     if (rows.length === 0) break;
 
-    for (const r of rows) {
-      processed++;
+    // 이번 배치의 마지막 타임스탬프(닫힌 세션 판정용)
+    const lastRowTs = rows[rows.length - 1].timestamp;
+    const batchLastTs = lastRowTs instanceof Date ? lastRowTs : new Date(lastRowTs);
 
-      // Prisma DateTime → JS Date
+    for (const r of rows) {
       const t = r.timestamp instanceof Date ? r.timestamp : new Date(r.timestamp);
       if (Number.isNaN(t.getTime())) continue;
 
       const ua = r.user_agent || '';
       const agent_group = makeAgentGroup(ua);
-      const key = `${r.remote_host || 'unknown'}|${agent_group}`;
+      const clientPort = r.remote_port ?? null;
+
+      // ✅ 조건1: (remote_port + OS/브라우저)
+      const key = `${clientPort ?? 'NA'}|${agent_group}`;
 
       let s = active.get(key);
       if (!s) {
         s = {
-          remote_host: r.remote_host || null,
+          remote_host: r.remote_host ?? null,
           user_agent: ua || null,
           agent_group,
+          port: clientPort,            // ✅ 포트 저장
           start: t,
           end: t,
           lastSeen: t,
@@ -150,14 +154,15 @@ async function run() {
         active.set(key, s);
       }
 
-      // 타임아웃이면 이전 세션 플러시 후 새 세션 시작
+      // ✅ 조건2: 30분 비활성 시 끊기
       const gapMs = t.getTime() - s.lastSeen.getTime();
       if (gapMs > INACTIVITY_MINUTES * 60 * 1000) {
         await flushSession(key);
         s = {
-          remote_host: r.remote_host || null,
+          remote_host: r.remote_host ?? null,
           user_agent: ua || null,
           agent_group,
+          port: clientPort,
           start: t,
           end: t,
           lastSeen: t,
@@ -181,12 +186,22 @@ async function run() {
       s.rawLogIds.push(r.id);
     }
 
-    // 배치 경계에서 로그 출력만
-    const lastId = rows[rows.length - 1].id;
-    console.log(`[*] batch=${batchNo}, processed+=${rows.length}, lastId=${lastId}`);
+    // 배치 경계에서 "닫힌 세션"만 flush (진행 중 세션은 유지)
+    const WINDOW_MS = INACTIVITY_MINUTES * 60 * 1000;
+    for (const key of Array.from(active.keys())) {
+      const s = active.get(key);
+      if (!s) continue;
+      if (batchLastTs.getTime() - s.lastSeen.getTime() >= WINDOW_MS) {
+        await flushSession(key);
+      }
+    }
+
+    // 커서 업데이트
+    lastId = rows[rows.length - 1].id;
+    console.log(`[*] batch=${batchNo}, processed+=${rows.length}, lastId=${lastId}, active=${active.size}`);
   }
 
-  // 남은 세션 전부 플러시
+  // 남은 세션 전부 flush
   for (const key of Array.from(active.keys())) {
     await flushSession(key);
   }
@@ -194,6 +209,7 @@ async function run() {
   console.log('[*] Sessionizing done.');
 }
 
+// ✅ 반드시 실행 호출 필요!
 run()
   .catch((e) => {
     console.error(e);
@@ -202,3 +218,4 @@ run()
   .finally(async () => {
     await prisma.$disconnect();
   });
+

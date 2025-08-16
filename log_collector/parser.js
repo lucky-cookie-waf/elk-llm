@@ -8,6 +8,9 @@ dotenv.config();
 const prisma = new PrismaClient();
 const LOG_FILE_PATH = '/var/log/apache2/modsec_audit.log';
 
+const toInt = (v) =>
+  v === undefined || v === null || v === '' ? null : (Number.parseInt(String(v), 10) || null);
+
 function parseApacheTimestamp(rawTime) {
   const match = rawTime.match(/^(\d{2})\/(\w{3})\/(\d{4}):(\d{2}):(\d{2}):(\d{2})/);
   if (!match) return null;
@@ -36,11 +39,16 @@ async function parseAuditLogFile() {
       try {
         const logJson = JSON.parse(line);
 
-        const timestampRaw = logJson.transaction?.time;
+        const t = logJson.transaction;
+        const timestampRaw = t?.time;
         const timestamp = parseApacheTimestamp(timestampRaw) || new Date();
 
-        const transactionId = logJson.transaction?.transaction_id || 'unknown';
-        const remoteHost = logJson.transaction?.remote_address || 'unknown';
+        const transactionId = t?.transaction_id ?? t?.id ?? 'unknown';
+        const remoteHost    = t?.client_ip ?? t?.remote_address ?? 'unknown';
+        const localHost     = t?.host_ip ?? t?.local_address ?? null;
+        const remotePort    = toInt(t?.client_port ?? t?.remote_port);
+        const localPort     = toInt(t?.host_port ?? t?.local_port);
+
         const matchedRules = logJson.audit_data?.messages || [];
         const fullLog = logJson;
 
@@ -51,6 +59,9 @@ async function parseAuditLogFile() {
             timestamp,
             transaction_id: transactionId,
             remote_host: remoteHost,
+            remote_port: remotePort,
+            local_host: localHost,
+            local_port: localPort,
             matched_rules: matchedRules,
             full_log: fullLog
           }
