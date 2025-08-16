@@ -62,7 +62,7 @@ SecRule REQUEST_URI "@rx malicious_pattern" \
     block,\
     msg:'Custom rule: Malicious pattern detected',\
     severity:'CRITICAL',\
-    logdata:'Matched Data: %{MATCHED_VAR} found within %{MATCHED_VAR_NAME}'"
+    logdata:'Matched Data: %{{MATCHED_VAR}} found within %{{MATCHED_VAR_NAME}}'"
 
 Return only the rule without any additional explanation.
     """
