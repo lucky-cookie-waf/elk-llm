@@ -1,3 +1,5 @@
 .env
 rules/custom_rules.conf
 __pycache__
+node_modules
+package-lock.json
