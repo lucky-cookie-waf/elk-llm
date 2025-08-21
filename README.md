@@ -1,3 +1,11 @@
+1. 사이드 바 크기(넓이 조정, 디자인 조정)
+2. 로그 리스트 표시 항목 수정, 정렬 조정, URI, user agent 더보기 기능
+3. 로그리스트 order 모달 크기, 정렬 수정
+4. 룰셋 관리 테이블 정렬, 항목 수정
+5. 로그인, 로그아웃 페이지 생성
+6. 전체적인 디자인 통일
+
+
 # Getting Started with Create React App
 
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
