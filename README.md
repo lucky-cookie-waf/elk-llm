@@ -28,7 +28,7 @@ cp log_collector/.env.example log_collector/.env
 .env 파일 예시:
 
 
-DATABASE_URL="postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs"
+DATABASE_URL=
 3. Docker 컨테이너 실행
 
 docker-compose up -d
