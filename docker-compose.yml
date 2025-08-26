@@ -85,7 +85,7 @@ services:
     volumes:
       - ./modsec_logs:/var/log/apache2/
       # 개발 중 로컬 수정 반영이 필요하면 아래 한 줄을 켜세요.
-      - ./log_collector:/app/log_collector
+    #  - ./log_collector:/app/log_collector
     working_dir: /app/log_collector
 
   # Prisma CLI를 쓸 임시 도구 컨테이너 (원할 때만 켬)
