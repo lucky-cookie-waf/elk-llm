@@ -21,3 +21,13 @@
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.env
+rules/custom_rules.conf
+__pycache__/
+package-lock.json
+node_modules/
+.DS_Store
+**/node_modules/
+*.log
+modsec_logs/*.log
+gen_rule/rules/

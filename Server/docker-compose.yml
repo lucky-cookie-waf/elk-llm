@@ -1,0 +1,137 @@
+name: elk-llm
+
+networks:
+  web-network:
+    driver: bridge
+    name: elk-llm_web-network
+
+volumes:
+  pgdata:
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: luckycookie
+      POSTGRES_PASSWORD: luckycookie
+      POSTGRES_DB: modsec_logs
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - web-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U luckycookie -d modsec_logs -h localhost"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  be_rules:
+    build: ./BE_rules
+    container_name: be_rules
+    env_file:
+      - ./BE_rules/.env
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - web-network
+
+  flask-app:
+    build:
+      context: ./flask_app
+      dockerfile: Dockerfile
+    container_name: flask-app
+    restart: always
+    env_file:
+      - ./flask_app/.env
+    networks:
+      - web-network
+    depends_on:
+      - postgres
+
+  modsec-proxy:
+    build:
+      context: ./modsec-proxy
+      dockerfile: Dockerfile
+    container_name: modsec-proxy
+    restart: always
+    ports:
+      - "8080:80"
+    volumes:
+      - ./modsec_logs:/var/log/apache2/
+    networks:
+      - web-network
+    depends_on:
+      - flask-app
+
+  log_collector:
+    build:
+      context: ./log_collector        # ⬅️ 이 서비스는 자기 폴더만 컨텍스트
+      dockerfile: Dockerfile
+    container_name: log_collector
+    restart: always
+    env_file:
+      - ./log_collector/.env          # ⬅️ Prisma의 DATABASE_URL 등
+    networks:
+      - web-network
+    depends_on:
+      - postgres
+    volumes:
+      - ./modsec_logs:/var/log/apache2/
+      # 개발 중 로컬 수정 반영이 필요하면 아래 한 줄을 켜세요.
+    #  - ./log_collector:/app/log_collector
+    working_dir: /app/log_collector
+
+  # Prisma CLI를 쓸 임시 도구 컨테이너 (원할 때만 켬)
+  prisma-runner:
+    image: node:20-alpine
+    container_name: prisma-runner
+    working_dir: /app/log_collector
+    volumes:
+      - ./log_collector:/app/log_collector
+    env_file:
+      - ./log_collector/.env          # ⬅️ 여기에도 같은 DATABASE_URL 사용
+    depends_on:
+      - postgres
+    networks:
+      - web-network
+    ports:
+      - "5555:5555"
+    command:
+      - sh
+      - -lc
+      - >
+        npx prisma@latest studio
+        --schema prisma/schema.prisma
+        --port 5555
+        --hostname 0.0.0.0
+        --browser none
+    profiles: ["tools"]               # `--profile tools`로 필요할 때만 실행
+
+  gen_rule:
+    build:
+      context: ./gen_rule             # ⬅️ gen_rule만 컨텍스트
+      dockerfile: Dockerfile
+    container_name: gen_rule
+    restart: "no"
+    env_file:
+      - ./gen_rule/.env
+    environment:
+      DATABASE_URL: postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs
+    networks:
+      - web-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      # 개발 편의를 원하면 켜고, 이미지 산출물 그대로 쓰려면 끄세요.
+      - ./gen_rule:/app/gen_rule
+      - ./rules:/app/rules
+    working_dir: /app/gen_rule
+    command: ["python", "-u", "main.py"]  # ⬅️ gen_rule은 main.py만 실행
