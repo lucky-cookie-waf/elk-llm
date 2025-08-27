@@ -26,7 +26,7 @@ function normalizeLabel(label) {
 //  - sort: start_time|end_time|created_at (기본 end_time)
 //  - order: asc|desc (기본 desc)
 //  - ip, ua: 부분검색
-router.get('/session', async (req, res) => {
+router.get('/', async (req, res) => {
   try {
     const page = toInt(req.query.page, 1);
     const pageSize = Math.min(toInt(req.query.pageSize, 20), 200);
@@ -100,7 +100,7 @@ router.get('/session', async (req, res) => {
 // ─────────────── 상세: GET /sessions/:id ───────────────
 // 쿼리:
 //  - limit: RawLog 반환 최대개수 (기본 200, 최대 1000)
-router.get('/session/:id', async (req, res) => {
+router.get('/:id', async (req, res) => {
   try {
     const id = Number.parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid session id' });
