@@ -135,3 +135,28 @@ services:
       - ./rules:/app/rules
     working_dir: /app/gen_rule
     command: ["python", "-u", "main.py"]  # ⬅️ gen_rule은 main.py만 실행
+
+  ai_classifier:
+    build:
+      context: ./ai_classifier
+      dockerfile: Dockerfile
+    container_name: ai_classifier
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+    env_file:
+      - ./ai_classifier/.env
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - FINE_TUNED_MODEL_ID=${FINE_TUNED_MODEL_ID}
+    networks:
+      - waf_network
+    depends_on:
+      - be_rules
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
