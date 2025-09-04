@@ -1,7 +1,6 @@
 import React from "react";
 import { NavLink } from "react-router-dom";
 
-/* ---------- UI helpers ---------- */
 const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
   <div style={{ background: "#0b1220", border: "1px solid #1f2937", borderRadius: 16, padding: 16, color: "#e5e7eb", ...style }}>
     {children}
@@ -26,7 +25,7 @@ const StatBadge: React.FC<{ label: string; value: string; sub?: React.ReactNode;
   </Card>
 );
 
-/* ---------- Charts ---------- */
+/* 차트트 */
 const LineChart: React.FC<{ width: number; height: number; data: number[] }> = ({ width, height, data }) => {
   const max = Math.max(...data) || 1;
   const min = 0;
@@ -117,7 +116,7 @@ const DonutChart: React.FC<{ size: number; thickness?: number; values: { label: 
   );
 };
 
-/* ---------- Page ---------- */
+/* 페이지 */
 export default function Dashboard() {
   const line = [10, 40, 120, 260, 210, 320, 752, 340, 410, 280, 260, 40, 20, 200, 360, 520, 470, 430, 410, 390, 420, 480];
   const donutVals = [
@@ -133,13 +132,13 @@ export default function Dashboard() {
           <div style={{ opacity: 0.8, fontSize: 12 }}>Admin • English 🇬🇧</div>
         </div>
 
-        {/* top stats */}
+        {/* 상위 */}
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
           <StatBadge label="Total Attack" value="10293" sub={<span style={{ color: "#22c55e" }}>▲ 1.3% Up from past week</span>} />
           <StatBadge label="Recent Attacks" value="12.09.2019-12.53PM" rightIcon={<span>⏱️</span>} />
         </div>
 
-        {/* insights: line(66%) + donut(34%) */}
+        {/* 선그래프, 원형 그래프프*/}
         <Card style={{ marginTop: 18 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <div style={{ fontWeight: 800, fontSize: 18 }}>Attack insights</div>
@@ -161,7 +160,7 @@ export default function Dashboard() {
           </div>
         </Card>
 
-        {/* details table */}
+        {/* 밑에 로그들? */}
         <Card style={{ marginTop: 18 }}>
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
             <div style={{ fontWeight: 800, fontSize: 18 }}>Attack Details</div>
