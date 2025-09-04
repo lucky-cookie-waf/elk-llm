@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import { NavLink } from "react-router-dom";
 
-/* ---------- bits ---------- */
 const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
   <div style={{ background: "#0b1220", border: "1px solid #1f2937", borderRadius: 16, padding: 16, color: "#e5e7eb", ...style }}>{children}</div>
 );
@@ -16,7 +15,7 @@ const StatusPill: React.FC<{ kind: "Accepted" | "Rejected" | "Processing" }> = (
   return <span style={{ background: map[kind].bg, color: map[kind].fg, padding: "6px 12px", borderRadius: 999, fontWeight: 800, fontSize: 12 }}>{kind}</span>;
 };
 
-/* ---------- types & data ---------- */
+/* 타입, 데이터 */
 interface RuleRow {
   id: string;
   attack: string;
@@ -35,7 +34,7 @@ const rowsInit: RuleRow[] = Array.from({ length: 10 }).map((_, i) => ({
   status: i === 3 ? "Rejected" : i === 4 ? "Processing" : "Accepted",
 }));
 
-/* ---------- page ---------- */
+/* 페이지 */
 export default function Rule() {
   const [rows] = useState<RuleRow[]>(rowsInit);
   const [open, setOpen] = useState<Record<string, boolean>>({});
