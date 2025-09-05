@@ -8,7 +8,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # 패키지/스키마 먼저 복사
-COPY package*.json ./
+COPY package*.json package-lock.json ./
 COPY prisma ./prisma
 
 # 의존성 설치
