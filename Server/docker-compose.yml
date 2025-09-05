@@ -33,7 +33,8 @@ services:
     build: ./BE_rules
     container_name: be_rules
     env_file:
-      - ./BE_rules/.env
+      - ./BE_rules/.env #서비스 자체 설정
+      - ./.env.shared
     ports:
       - "3001:3001"
     depends_on:
@@ -77,11 +78,11 @@ services:
     container_name: log_collector
     restart: always
     env_file:
-      - ./log_collector/.env          # ⬅️ Prisma의 DATABASE_URL 등
+      - ./.env.shared          # ⬅️ Prisma의 DATABASE_URL 등
     networks:
       - web-network
-    depends_on:
-      - postgres
+    #depends_on:
+      #- postgres
     volumes:
       - ./modsec_logs:/var/log/apache2/
       # 개발 중 로컬 수정 반영이 필요하면 아래 한 줄을 켜세요.
@@ -96,9 +97,9 @@ services:
     volumes:
       - ./log_collector:/app/log_collector
     env_file:
-      - ./log_collector/.env          # ⬅️ 여기에도 같은 DATABASE_URL 사용
-    depends_on:
-      - postgres
+      - ./.env.shared          # ⬅️ 여기에도 같은 DATABASE_URL 사용
+    #depends_on:
+      #- postgres
     networks:
       - web-network
     ports:
@@ -122,13 +123,14 @@ services:
     restart: "no"
     env_file:
       - ./gen_rule/.env
-    environment:
-      DATABASE_URL: postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs
+      - ./.env.shared
+    #environment:
+      #DATABASE_URL: postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs
     networks:
       - web-network
-    depends_on:
-      postgres:
-        condition: service_healthy
+    #depends_on:
+      #postgres:
+        #condition: service_healthy
     volumes:
       # 개발 편의를 원하면 켜고, 이미지 산출물 그대로 쓰려면 끄세요.
       - ./gen_rule:/app/gen_rule
