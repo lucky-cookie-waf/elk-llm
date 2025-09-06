@@ -1,58 +1,63 @@
-#!/bin/sh
-set -eu  # pipefail 제거, 오류(-e)와 미정의 변수 사용(-u)만 체크
+#!/usr/bin/env sh
+set -eu
 
-echo "[log_collector] starting..."
+log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
-# ===== DB 준비 대기 (환경변수 기본값 허용) =====
-PGHOST="${POSTGRES_HOST:-postgres}"
-PGPORT="${POSTGRES_PORT:-5432}"
-PGUSER="${POSTGRES_USER:-postgres}"
+log "[log_collector] starting..."
 
-if command -v pg_isready >/dev/null 2>&1; then
-  echo "[log_collector] waiting for postgres at ${PGHOST}:${PGPORT} ..."
-  i=0
-  while ! pg_isready -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" >/dev/null 2>&1; do
-    i=$((i+1))
-    if [ "$i" -ge 60 ]; then
-      echo "[log_collector] pg_isready timeout, continue anyway"
-      break
-    fi
-    sleep 1
-  done
+# IPv4 우선 (DNS가 IPv6 먼저 줄 때 접속 오류 예방)
+if [ -z "${NODE_OPTIONS:-}" ]; then
+  export NODE_OPTIONS="--dns-result-order=ipv4first"
 else
-  echo "[log_collector] pg_isready not found, skipping DB wait."
+  case "$NODE_OPTIONS" in
+    *"--dns-result-order="*) : ;;
+    *) export NODE_OPTIONS="$NODE_OPTIONS --dns-result-order=ipv4first" ;;
+  esac
 fi
 
-# ===== Prisma 마이그레이션 (DB 준비 후 1회) =====
-if command -v npx >/dev/null 2>&1; then
-  if [ -z "${DATABASE_URL:-}" ]; then
-    echo "[migrate] ERROR: DATABASE_URL is not set. Aborting."
-    exit 1
+# 필수 환경 확인 (Pooler 6543 URL이어야 함)
+if [ -z "${DATABASE_URL:-}" ]; then
+  log "[fatal] DATABASE_URL is not set. Make sure .env.shared is loaded."
+  exit 1
+fi
+case "$DATABASE_URL" in
+  *db.*.supabase.co:5432* )
+    log "[warn] DATABASE_URL이 Direct(5432)로 보입니다. 런타임은 Pooler(6543) URL을 권장합니다."
+  ;;
+esac
+
+# ===== (옵션) Prisma 마이그레이션 =====
+# 기본적으로 실행하지 않음. 필요 시 MIGRATE_ON_START=1 로 켜기
+if [ "${MIGRATE_ON_START:-0}" = "1" ]; then
+  if command -v npx >/dev/null 2>&1; then
+    SCHEMA_PATH="${PRISMA_SCHEMA_PATH:-prisma/schema.prisma}"
+    log "[migrate] prisma migrate deploy (schema: $SCHEMA_PATH)"
+    npx -y prisma migrate deploy --schema "$SCHEMA_PATH"
+    log "[migrate] done."
+  else
+    log "[migrate] npx not found, skipping migrate."
   fi
-  echo "[migrate] applying Prisma migrations..."
-  npx -y prisma migrate deploy
-  echo "[migrate] done."
 else
-  echo "[migrate] npx not found, skipping prisma migrate deploy."
+  log "[migrate] skipped (MIGRATE_ON_START!=1)"
 fi
 
-# ===== 종료 시 자식 정리 =====
-trap 'echo "[log_collector] stopping..."; kill 0 2>/dev/null || true; exit 0' TERM INT
+# 정상 종료시 자식 프로세스 정리
+trap 'log "[log_collector] stopping..."; kill 0 2>/dev/null || true; exit 0' TERM INT
 
 # ===== 파서 루프 (RawLog 적재) =====
 parser_loop() {
-  echo "[parser] loop start"
+  log "[parser] loop start"
   while true; do
-    node /app/log_collector/parser.js || echo "[parser] exited ($?)"
+    node /app/log_collector/parser.js || log "[parser] exited ($?)"
     sleep 5
   done
 }
 
 # ===== 세션화 루프 (Sessionize) =====
 session_loop() {
-  echo "[sessionizing] loop start"
+  log "[sessionizing] loop start"
   while true; do
-    node /app/log_collector/sessionizing.js || echo "[sessionizing] exited ($?)"
+    node /app/log_collector/sessionizing.js || log "[sessionizing] exited ($?)"
     sleep 30
   done
 }

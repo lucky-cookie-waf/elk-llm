@@ -12,6 +12,7 @@ services:
   postgres:
     image: postgres:15
     container_name: postgres
+    profiles: ["localdb"]
     restart: always
     environment:
       POSTGRES_USER: luckycookie
@@ -35,13 +36,14 @@ services:
     env_file:
       - ./BE_rules/.env #서비스 자체 설정
       - ./.env.shared
+    environment:
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+    dns: ["1.1.1.1","8.8.8.8"]
     ports:
       - "3001:3001"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
       - web-network
+    restart: unless-stopped
 
   flask-app:
     build:
@@ -53,8 +55,8 @@ services:
       - ./flask_app/.env
     networks:
       - web-network
-    depends_on:
-      - postgres
+    #depends_on:
+      #- postgres
 
   modsec-proxy:
     build:
@@ -79,6 +81,11 @@ services:
     restart: always
     env_file:
       - ./.env.shared          # ⬅️ Prisma의 DATABASE_URL 등
+    environment:
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     networks:
       - web-network
     #depends_on:
@@ -91,13 +98,16 @@ services:
 
   # Prisma CLI를 쓸 임시 도구 컨테이너 (원할 때만 켬)
   prisma-runner:
-    image: node:20-alpine
+    image: node:20-bookworm-slim
     container_name: prisma-runner
     working_dir: /app/log_collector
     volumes:
       - ./log_collector:/app/log_collector
     env_file:
       - ./.env.shared          # ⬅️ 여기에도 같은 DATABASE_URL 사용
+    environment:
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+    dns: ["1.1.1.1","8.8.8.8"]
     #depends_on:
       #- postgres
     networks:
@@ -147,8 +157,12 @@ services:
       - "3002:3002"
     restart: unless-stopped
     env_file:
+      - ./.env.shared
       - ./ai_classifier/.env
+    environment:
+      NODE_OPTIONS: "--dns-result-order=ipv4first"
+    dns: ["1.1.1.1", "8.8.8.8"]
     networks:
       - web-network
-    depends_on:
-      - postgres
+    #depends_on:
+      #- postgres
