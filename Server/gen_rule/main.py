@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 RULE_FILE_PATH = os.getenv("RULE_FILE_PATH", "rules/custom_rules.conf")
-DATABASE_URL   = os.getenv("DATABASE_URL", "postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs")
+DATABASE_URL   = os.getenv("DATABASE_URL", "postgresql://postgres.nqpshpimhofnjxlcepop:luckycookiedb123@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&schema=public&pgbouncer=true&connection_limit=1")
 
 def fetch_next_uncovered_session_and_logs():
     """
@@ -18,7 +18,8 @@ def fetch_next_uncovered_session_and_logs():
       - logs_data: format_logs_for_prompt()가 처리할 수 있는 딕셔너리 리스트
       - session_info: {"id", "session_id", "ip_address", "user_agent"}
     """
-    db_url = os.getenv("DATABASE_URL", "postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs")
+    db_url = os.getenv("DATABASE_URL", "postgresql://postgres.nqpshpimhofnjxlcepop:luckycookiedb123@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&schema=public&pgbouncer=true&connection_limit=1"
+)
     conn = psycopg2.connect(db_url)
     try:
         with conn.cursor() as cur:
@@ -217,7 +218,8 @@ def _normalize_sessions(src):
 def save_rule_to_db(rule_text: str, source_sessions=None) -> int:
     import os, re, json, psycopg2
 
-    db_url = os.getenv("DATABASE_URL", "postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs")
+    db_url = os.getenv("DATABASE_URL", "postgresql://postgres.nqpshpimhofnjxlcepop:luckycookiedb123@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&schema=public&pgbouncer=true&connection_limit=1"
+)
     RULE_ID_RE  = re.compile(r'\bid\s*:\s*(\d+)\b', re.I)
     PHASE_RE    = re.compile(r'\bphase\s*:\s*(\d+)\b', re.I)
     SEVERITY_RE = re.compile(r"severity\s*:\s*'?(CRITICAL|HIGH|MEDIUM|LOW)'?", re.I)
