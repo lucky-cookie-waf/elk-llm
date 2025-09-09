@@ -1,7 +1,10 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
 /* 카드 박스 */
-const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({ children, style }) => (
+const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({
+  children,
+  style,
+}) => (
   <div
     style={{
       background: "#0b1220",
@@ -17,10 +20,10 @@ const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }>
 );
 
 /* 상태 Pill */
-const StatusPill: React.FC<{ kind: "Accepted" | "Rejected" | "Processing"; onClick?: () => void }> = ({
-  kind,
-  onClick,
-}) => {
+const StatusPill: React.FC<{
+  kind: "Accepted" | "Rejected" | "Processing";
+  onClick?: () => void;
+}> = ({ kind, onClick }) => {
   const map = {
     Accepted: { bg: "#34d399", fg: "#0f172a" },
     Rejected: { bg: "#ef4444", fg: "#0f172a" },
@@ -45,45 +48,98 @@ const StatusPill: React.FC<{ kind: "Accepted" | "Rejected" | "Processing"; onCli
   );
 };
 
-/* 타입 */
+/* 타입 (프론트에서 사용하는 row 구조) */
 interface RuleRow {
   id: string;
   attack: string;
   suggestion: string;
   explanation: string;
-  date: string; // 04/Aug/2025:22:15:30
+  date: string; // created_at 포맷
   status: "Accepted" | "Rejected" | "Processing";
 }
 
-const SAMPLE_SUGGESTION = String.raw`\\union\\b+\\s*select|\\binsert\\b|\\bdelete\\b|\\bdrop\\b|\\bupdate\\b|\\s*select\\b.*from\\b`;
-
-const rowsInit: RuleRow[] = Array.from({ length: 10 }).map((_, i) => ({
-  id: String(i + 1),
-  attack: "SQL injection",
-  suggestion: SAMPLE_SUGGESTION,
-  explanation: "--ad0c2a0-B--",
-  date: "04/Aug/2025:22:15:30",
-  status: i === 3 ? "Rejected" : i === 4 ? "Processing" : "Accepted",
-}));
-
 /* 메인 페이지 */
-export default function Rule() {
-  const [rows, setRows] = useState<RuleRow[]>(rowsInit);
+export default function RulePage() {
+  const [rows, setRows] = useState<RuleRow[]>([]);
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  // API에서 데이터 불러오기
+  useEffect(() => {
+    const fetchRules = async () => {
+      try {
+        const res = await fetch("/api/rules?limit=20&offset=0");
+        const data = await res.json();
+
+        // 백엔드에서 내려주는 items -> RuleRow 변환
+        const mapped: RuleRow[] = data.items.map((item: any) => ({
+          id: String(item.id),
+          attack: item.rule_name ?? "Unknown",
+          suggestion: item.operator ?? "",
+          explanation: item.logdata ?? "",
+          date: new Date(item.created_at).toLocaleString(),
+          status: "Processing", // DB에 없음 → 프론트 전용 기본값
+        }));
+        setRows(mapped);
+      } catch (err) {
+        console.error("Failed to fetch rules", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchRules();
+  }, []);
 
   const handleStatusChange = (status: RuleRow["status"]) => {
     if (!editingId) return;
-    setRows((prev) => prev.map((r) => (r.id === editingId ? { ...r, status } : r)));
+    setRows((prev) =>
+      prev.map((r) => (r.id === editingId ? { ...r, status } : r))
+    );
     setEditingId(null); // 모달 닫기
   };
 
+  if (loading) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          minHeight: "100vh",
+          background: "#0a0f1a",
+          color: "#e5e7eb",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        Loading rules...
+      </div>
+    );
+  }
+
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#0a0f1a", color: "#e5e7eb" }}>
+    <div
+      style={{
+        display: "flex",
+        minHeight: "100vh",
+        background: "#0a0f1a",
+        color: "#e5e7eb",
+      }}
+    >
       <main style={{ flex: 1, padding: 24 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <h1 style={{ fontSize: 32, fontWeight: 800 }}>Custom Rule management</h1>
-          <div style={{ opacity: 0.8, fontSize: 12 }}>Admin • English 🇬🇧</div>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+          }}
+        >
+          <h1 style={{ fontSize: 32, fontWeight: 800 }}>
+            Custom Rule management
+          </h1>
+          <div style={{ opacity: 0.8, fontSize: 12 }}>
+            Admin • English 🇬🇧
+          </div>
         </div>
 
         <Card style={{ marginTop: 18, padding: 0 }}>
@@ -124,7 +180,8 @@ export default function Rule() {
                     <pre
                       style={{
                         margin: 0,
-                        fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                        fontFamily:
+                          "ui-monospace, SFMono-Regular, Menlo, monospace",
                         whiteSpace: "pre-wrap",
                         lineHeight: 1.3,
                         opacity: 0.95,
@@ -136,7 +193,9 @@ export default function Rule() {
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ opacity: 0.9 }}>{r.explanation}</span>
                     <button
-                      onClick={() => setOpen((o) => ({ ...o, [r.id]: !isOpen }))}
+                      onClick={() =>
+                        setOpen((o) => ({ ...o, [r.id]: !isOpen }))
+                      }
                       aria-label="toggle details"
                       style={{
                         padding: "6px 10px",
@@ -152,22 +211,35 @@ export default function Rule() {
                   </div>
                   <div>{r.date}</div>
                   <div style={{ textAlign: "right" }}>
-                    <StatusPill kind={r.status} onClick={() => setEditingId(r.id)} />
+                    <StatusPill
+                      kind={r.status}
+                      onClick={() => setEditingId(r.id)}
+                    />
                   </div>
                 </div>
 
                 {isOpen && (
                   <div style={{ padding: "0 16px 16px 16px" }}>
                     <Card style={{ padding: 12, background: "#0a1424" }}>
-                      <div style={{ opacity: 0.8, fontSize: 12, marginBottom: 6 }}>Raw rule preview</div>
+                      <div
+                        style={{
+                          opacity: 0.8,
+                          fontSize: 12,
+                          marginBottom: 6,
+                        }}
+                      >
+                        Raw rule preview
+                      </div>
                       <pre
                         style={{
                           margin: 0,
                           whiteSpace: "pre-wrap",
-                          fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+                          fontFamily:
+                            "ui-monospace, SFMono-Regular, Menlo, monospace",
                         }}
-                      >{`SecRule REQUEST_URI "${SAMPLE_SUGGESTION}" \
-  "id:93${r.id}00,phase:2,deny,status:403,log,msg:'SQLi pattern detected'"`}</pre>
+                      >
+                        {JSON.stringify(r, null, 2)}
+                      </pre>
                     </Card>
                   </div>
                 )}
@@ -203,9 +275,18 @@ export default function Rule() {
           >
             <h2 style={{ marginBottom: 16 }}>Change Status</h2>
             <div style={{ display: "flex", gap: 12, justifyContent: "center" }}>
-              <StatusPill kind="Accepted" onClick={() => handleStatusChange("Accepted")} />
-              <StatusPill kind="Rejected" onClick={() => handleStatusChange("Rejected")} />
-              <StatusPill kind="Processing" onClick={() => handleStatusChange("Processing")} />
+              <StatusPill
+                kind="Accepted"
+                onClick={() => handleStatusChange("Accepted")}
+              />
+              <StatusPill
+                kind="Rejected"
+                onClick={() => handleStatusChange("Rejected")}
+              />
+              <StatusPill
+                kind="Processing"
+                onClick={() => handleStatusChange("Processing")}
+              />
             </div>
             <button
               onClick={() => setEditingId(null)}
