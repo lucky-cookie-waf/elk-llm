@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs")
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres.nqpshpimhofnjxlcepop:luckycookiedb123@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require&schema=public&pgbouncer=true&connection_limit=1")
 
 def test_db_connection():
     """데이터베이스 연결을 테스트합니다."""

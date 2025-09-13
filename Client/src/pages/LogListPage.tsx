@@ -1,75 +1,102 @@
-import React, { useMemo, useState } from "react";
-import { NavLink } from "react-router-dom";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/* ---------- helpers ---------- */
+/* ========== time helpers ========== */
 const pad2 = (n: number) => String(n).padStart(2, "0");
+const fmtParts = (iso: string) => {
+  const d = new Date(iso);
+  const yy = String(d.getFullYear()).slice(-2);
+  const MM = pad2(d.getMonth() + 1);
+  const DD = pad2(d.getDate());
+  const HH = pad2(d.getHours());
+  const mm = pad2(d.getMinutes());
+  const ss = pad2(d.getSeconds());
+  return { ymd: `${yy}/${MM}/${DD}`, hms: `${HH}:${mm}:${ss}` };
+};
 const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
-const daysInMonth = (y: number, m: number) => {
-  if (m === 2) return isLeapYear(y) ? 29 : 28;
-  return [4, 6, 9, 11].includes(m) ? 30 : 31;
-};
-const fmtStamp = (y: number, m: number, d: number, h: number, min: number) => {
-  const yy = String(y).slice(-2);
-  return `${yy}.${pad2(m)}.${pad2(d)}.${pad2(h)}:${pad2(min)}`;
-};
+const daysInMonth = (y: number, m: number) =>
+  m === 2 ? (isLeapYear(y) ? 29 : 28) : [4, 6, 9, 11].includes(m) ? 30 : 31;
+const stampLabel = (y: number, m: number, d: number, h: number, min: number) =>
+  `${String(y).slice(-2)}.${pad2(m)}.${pad2(d)}.${pad2(h)}:${pad2(min)}`;
 
+/* ========== types ========== */
 type Status = "Safe" | "Danger" | "Detecting";
+type OrderType = "latest" | "earliest" | "user-agent";
+type TimeKey = "y" | "m" | "d" | "h" | "min";
 type LogItem = {
   id: string;
   detection: Status;
-  timestamp: string; // ISO
-  ip: string;
-  method: string;
-  uri: string;
-  agent: string;
-  referrer: string;
-  body: number;
+  session_id: string;
+  ip_address: string;
+  user_agent: string;
+  start_time: string; // ISO
+  end_time: string; // ISO
 };
-type OrderType = "latest" | "earliest" | "user-agent";
 
-const sampleLogs: LogItem[] = [
-  {
-    id: "1",
-    detection: "Safe",
-    timestamp: "2020-07-17T12:23:34+01:00",
-    ip: "172.26.0.1",
-    method: "GET",
-    uri: "/blog/index.php/2020/04/04/voluptatum-reprehenderit-maiores-ab-sequi-quaerat/",
-    agent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.130 Safari/537.36",
-    referrer: "내용 없음",
-    body: 200,
-  },
-  {
-    id: "2",
-    detection: "Danger",
-    timestamp: "2020-07-17T12:23:34+01:00",
-    ip: "172.26.0.1",
-    method: "GET",
-    uri: "/blog/index.php/2020/04/04/voluptatum-reprehenderit-maiores-ab-sequi-quaerat/",
-    agent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.130 Safari/537.36",
-    referrer: "내용 없음",
-    body: 200,
-  },
-  {
-    id: "3",
-    detection: "Detecting",
-    timestamp: "2020-07-17T12:23:34+01:00",
-    ip: "172.26.0.1",
-    method: "GET",
-    uri: "/blog/index.php/2020/04/04/voluptatum-reprehenderit-maiores-ab-sequi-quaerat/",
-    agent:
-      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.130 Safari/537.36",
-    referrer: "내용 없음",
-    body: 200,
-  },
-];
+/* ========== sample MOCK (Reset용) ========== */
+const MOCK: LogItem[] = Array.from({ length: 9 }).map((_, i) => ({
+  id: String(i + 1),
+  detection: (["Safe", "Danger", "Detecting"] as Status[])[i % 3],
+  session_id: `session-${i + 1}`,
+  ip_address: `172.26.0.${i + 1}`,
+  user_agent:
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.130 Safari/537.36",
+  start_time: "2020-07-17T11:23:00Z",
+  end_time: "2020-07-17T12:23:34Z",
+}));
 
-const Badge: React.FC<{ color: string; children: React.ReactNode }> = ({ color, children }) => (
-  <span style={{ background: color, color: "#0f172a", padding: "4px 10px", borderRadius: 8, fontWeight: 600, fontSize: 12 }}>{children}</span>
+/* ========== small UI atoms ========== */
+const Badge: React.FC<{ type: Status }> = ({ type }) => {
+  const map: Record<Status, string> = {
+    Safe: "#34d399",
+    Danger: "#ef4444",
+    Detecting: "#6b7280",
+  };
+  return (
+    <span
+      style={{
+        background: map[type],
+        color: "#0f172a",
+        padding: "4px 10px",
+        borderRadius: 8,
+        fontWeight: 700,
+        fontSize: 12,
+      }}
+    >
+      {type}
+    </span>
+  );
+};
+
+const ToolbarButton: React.FC<{
+  label: string;
+  value?: string;
+  onClick?: () => void;
+}> = ({ label, value, onClick }) => (
+  <button
+    onClick={onClick}
+    style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      padding: "12px 14px",
+      borderRadius: 10,
+      background: "#0b1220",
+      border: "1px solid #1f2937",
+      color: "#e5e7eb",
+      cursor: "pointer",
+    }}
+  >
+    <span style={{ opacity: 0.8 }}>{label}</span>
+    {value && <span style={{ fontWeight: 800 }}>{value}</span>}
+    <span style={{ marginLeft: 6, opacity: 0.5 }}>▾</span>
+  </button>
 );
-const PillButton: React.FC<{ active?: boolean; onClick?: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
+
+const Pill: React.FC<{
+  active?: boolean;
+  onClick?: () => void;
+  children: React.ReactNode;
+}> = ({ active, onClick, children }) => (
   <button
     onClick={onClick}
     style={{
@@ -78,222 +105,598 @@ const PillButton: React.FC<{ active?: boolean; onClick?: () => void; children: R
       border: "1px solid #334155",
       background: active ? "#3b82f6" : "#0b1220",
       color: active ? "white" : "#cbd5e1",
-      fontWeight: 600,
+      fontWeight: 700,
       cursor: "pointer",
     }}
   >
     {children}
   </button>
 );
-const ToolbarButton: React.FC<{ label: string; value?: string; onClick?: () => void }> = ({ label, value, onClick }) => (
-  <button
-    onClick={onClick}
-    style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", borderRadius: 10, background: "#0b1220", border: "1px solid #1f2937", color: "#e5e7eb" }}
-  >
-    <span style={{ opacity: 0.8 }}>{label}</span>
-    <span style={{ fontWeight: 700 }}>{value ?? ""}</span>
-    <span style={{ marginLeft: 6, opacity: 0.5 }}>▾</span>
-  </button>
-);
-const Modal: React.FC<{ open: boolean; onClose?: () => void; width?: number; children: React.ReactNode }> = ({ open, onClose, width = 560, children }) => {
+
+const Modal: React.FC<{
+  open: boolean;
+  width?: number;
+  onClose: () => void;
+  children: React.ReactNode;
+}> = ({ open, width = 560, onClose, children }) => {
   if (!open) return null;
   return (
-    <div role="dialog" aria-modal onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-      <div onClick={(e) => e.stopPropagation()} style={{ width, background: "#0f172a", border: "1px solid #1f2937", borderRadius: 16, padding: 20, color: "#e2e8f0", boxShadow: "0 10px 40px rgba(0,0,0,0.35)" }}>
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          width,
+          background: "#0f172a",
+          border: "1px solid #1f2937",
+          borderRadius: 16,
+          padding: 20,
+          color: "#e2e8f0",
+          boxShadow: "0 10px 40px rgba(0,0,0,.35)",
+        }}
+      >
         {children}
       </div>
     </div>
   );
 };
 
-/* ---------- Page ---------- */
-export default function LogList() {
-  const now = new Date();
-  const [tsModalOpen, setTsModalOpen] = useState(false);
-  const [tsApplied, setTsApplied] = useState<{ y: number; m: number; d: number; h: number; min: number } | null>(null);
-  const [tsTemp, setTsTemp] = useState({ y: Math.max(1, now.getFullYear()), m: now.getMonth() + 1, d: now.getDate(), h: now.getHours(), min: now.getMinutes() });
-  const bump = (key: "y" | "m" | "d" | "h" | "min", dir: 1 | -1) => {
-    setTsTemp((prev) => {
-      let { y, m, d, h, min } = prev;
-      if (key === "y") y = Math.min(2100, Math.max(1, y + dir));
-      if (key === "m") m = Math.min(12, Math.max(1, m + dir));
-      if (key === "h") h = Math.min(23, Math.max(0, h + dir));
-      if (key === "min") min = Math.min(59, Math.max(0, min + dir));
-      const maxD = daysInMonth(y, m);
-      if (key === "d") d = Math.min(maxD, Math.max(1, d + dir));
-      else d = Math.min(maxD, d);
-      return { y, m, d, h, min };
-    });
-  };
-  const appliedTsLabel = tsApplied ? fmtStamp(tsApplied.y, tsApplied.m, tsApplied.d, tsApplied.h, tsApplied.min) : "Date";
+/* ========== popover helpers ========== */
+function useOutside(handler: () => void) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const md = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) handler();
+    };
+    const esc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") handler();
+    };
+    window.addEventListener("mousedown", md);
+    window.addEventListener("keydown", esc);
+    return () => {
+      window.removeEventListener("mousedown", md);
+      window.removeEventListener("keydown", esc);
+    };
+  }, [handler]);
+  return ref;
+}
 
-  const [orderTypeOpen, setOrderTypeOpen] = useState(false);
+const Pop: React.FC<{
+  open: boolean;
+  anchor?: DOMRect;
+  onClose: () => void;
+  children: React.ReactNode;
+}> = ({ open, anchor, onClose, children }) => {
+  const ref = useOutside(onClose);
+  if (!open || !anchor) return null;
+  const top = anchor.top + window.scrollY + anchor.height + 8;
+  const left = anchor.left + window.scrollX;
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "absolute",
+        top,
+        left,
+        width: anchor.width,
+        background: "#0f172a",
+        border: "1px solid #1f2937",
+        borderRadius: 12,
+        padding: 12,
+        color: "#e5e7eb",
+        boxShadow: "0 10px 30px rgba(0,0,0,.35)",
+        zIndex: 60,
+      }}
+    >
+      {children}
+    </div>
+  );
+};
+
+/* ========== Page ========== */
+export default function LogListPage() {
+  /* 데이터 로드 */
+  const [rows, setRows] = useState<LogItem[]>([]);
+  useEffect(() => {
+    fetch("/session")
+      .then((res) => res.json())
+      .then((data) => {
+        if (Array.isArray(data?.data)) setRows(data.data);
+        else if (Array.isArray(data)) setRows(data);
+        else setRows([]);
+      })
+      .catch((err) => {
+        alert("세션 목록을 불러오지 못했습니다: " + err);
+      });
+  }, []);
+
+  /* 검색 */
+  const [q, setQ] = useState("");
+
+  /* 정렬/상태 필터 */
   const [orderApplied, setOrderApplied] = useState<OrderType>("latest");
+  const [statusApplied, setStatusApplied] = useState<Set<Status>>(new Set());
+
+  // 라벨
+  const orderLabel = useMemo(() => {
+    if (orderApplied === "latest") return "Latest";
+    if (orderApplied === "earliest") return "Earliest";
+    return "User-Agent";
+  }, [orderApplied]);
+
+  const statusLabel = useMemo(() => {
+    if (!statusApplied.size) return "All";
+    return Array.from(statusApplied).join(", ");
+  }, [statusApplied]);
+
+  /* 모달: Order */
+  const [orderOpen, setOrderOpen] = useState(false);
   const [orderTemp, setOrderTemp] = useState<OrderType>("latest");
 
+  /* 모달: Status */
   const [statusOpen, setStatusOpen] = useState(false);
-  const [statusApplied, setStatusApplied] = useState<Set<Status>>(new Set());
   const [statusTemp, setStatusTemp] = useState<Set<Status>>(new Set());
-  const toggleStatus = (s: Status) => {
-    setStatusTemp((cur) => {
-      const next = new Set(cur);
-      next.has(s) ? next.delete(s) : next.add(s);
+  const toggleStatus = (s: Status) =>
+    setStatusTemp((prev) => {
+      const next = new Set(prev);
+      if (next.has(s)) next.delete(s);
+      else next.add(s);
       return next;
     });
+
+  /* Time 필터 */
+  const now = new Date();
+  const [timeOpen, setTimeOpen] = useState(false);
+  const [timeTemp, setTimeTemp] = useState({
+    y: now.getFullYear(),
+    m: now.getMonth() + 1,
+    d: now.getDate(),
+    h: now.getHours(),
+    min: now.getMinutes(),
+  });
+  const [timeApplied, setTimeApplied] =
+    useState<{ y: number; m: number; d: number; h: number; min: number } | null>(null);
+
+  const bump = (key: TimeKey, dir: 1 | -1) =>
+    setTimeTemp((p) => {
+      let { y, m, d, h, min } = p;
+      if (key === "y") y = Math.min(2100, Math.max(1, y + dir));
+      if (key === "m") m = Math.min(12, Math.max(1, m + dir));
+      if (key === "d") d = Math.min(daysInMonth(y, m), Math.max(1, d + dir));
+      if (key === "h") h = Math.min(23, Math.max(0, h + dir));
+      if (key === "min") min = Math.min(59, Math.max(0, min + dir));
+      return { y, m, d, h, min };
+    });
+
+  const timeLabel = useMemo(
+    () =>
+      timeApplied
+        ? stampLabel(timeApplied.y, timeApplied.m, timeApplied.d, timeApplied.h, timeApplied.min)
+        : "Any time",
+    [timeApplied]
+  );
+
+  // user-agent 팝업
+  const [uaPop, setUaPop] = useState<{ open: boolean; rect?: DOMRect; text?: string }>({
+    open: false,
+  });
+  const onUAClick = (e: React.MouseEvent<HTMLDivElement>, text: string) => {
+    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    setUaPop({ open: true, rect, text });
   };
 
-  const resetAll = () => {
-    setTsApplied(null);
-    setOrderApplied("latest");
-    setStatusApplied(new Set());
-  };
+  /* 화면 표시용 리스트 정렬/필터/검색 */
+  const list = useMemo(() => {
+    let a = [...rows];
 
-  const logs = useMemo(() => {
-    let list = [...sampleLogs];
-    if (statusApplied.size > 0) list = list.filter((l) => statusApplied.has(l.detection));
-    if (orderApplied === "latest") list.sort((a, b) => (a.timestamp < b.timestamp ? 1 : -1));
-    else if (orderApplied === "earliest") list.sort((a, b) => (a.timestamp > b.timestamp ? 1 : -1));
-    else list.sort((a, b) => a.agent.localeCompare(b.agent));
-    return list;
-  }, [orderApplied, statusApplied]);
+    // 상태 필터
+    if (statusApplied.size) a = a.filter((r) => statusApplied.has(r.detection));
+
+    // 검색
+    if (q.trim()) {
+      const s = q.toLowerCase();
+      a = a.filter(
+        (r) =>
+          r.session_id.toLowerCase().includes(s) ||
+          r.ip_address.toLowerCase().includes(s) ||
+          r.user_agent.toLowerCase().includes(s)
+      );
+    }
+
+    // (선택) 시간 필터 – end_time이 선택 시간 이후인 것만
+    if (timeApplied) {
+      const t = new Date(
+        timeApplied.y,
+        timeApplied.m - 1,
+        timeApplied.d,
+        timeApplied.h,
+        timeApplied.min
+      ).getTime();
+      a = a.filter((r) => new Date(r.end_time).getTime() >= t);
+    }
+
+    // 정렬
+    if (orderApplied === "user-agent")
+      a.sort((x, y) => x.user_agent.localeCompare(y.user_agent));
+    else if (orderApplied === "earliest")
+      a.sort((x, y) => (x.start_time > y.start_time ? 1 : -1));
+    else a.sort((x, y) => (x.end_time < y.end_time ? 1 : -1)); // latest
+
+    return a;
+  }, [rows, statusApplied, orderApplied, q, timeApplied]);
+
+  /* Time 필드 정의 (키 리터럴 고정) */
+  const timeDefs: ReadonlyArray<{ key: TimeKey; label: string }> = [
+    { key: "y", label: "Year" },
+    { key: "m", label: "Month" },
+    { key: "d", label: "Date" },
+    { key: "h", label: "Hour" },
+    { key: "min", label: "Minute" },
+  ] as const;
 
   return (
-    <div style={{ display: "flex", minHeight: "100vh", background: "#0a0f1a", color: "#e5e7eb" }}>
-      <main style={{ flex: 1, padding: 24 }}>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <h1 style={{ fontSize: 32, fontWeight: 800 }}>Log Lists</h1>
-          <div style={{ opacity: 0.8, fontSize: 12 }}>Admin • English 🇬🇧</div>
-        </div>
-
-        {/* Filters */}
-        <div style={{ display: "flex", alignItems: "center", gap: 12, marginTop: 18, background: "#0b1220", border: "1px solid #1f2937", borderRadius: 12, padding: 10 }}>
-          <span style={{ opacity: 0.7, padding: "0 8px" }}>Filter By</span>
-          <ToolbarButton label="" value={appliedTsLabel} onClick={() => setTsModalOpen(true)} />
-          <ToolbarButton label="Order Type" onClick={() => { setOrderTemp(orderApplied); setOrderTypeOpen(true); }} />
-          <ToolbarButton label="Order Status" onClick={() => { setStatusTemp(new Set(statusApplied)); setStatusOpen(true); }} />
-          <div style={{ flex: 1 }} />
-          <button onClick={resetAll} style={{ padding: "10px 14px", borderRadius: 10, background: "#0b1220", border: "1px solid #ef4444", color: "#fca5a5", fontWeight: 700, cursor: "pointer" }}>
-            Reset Filter
-          </button>
-        </div>
-
-        {/* Table */}
-        <div style={{ marginTop: 16, background: "#0b1220", border: "1px solid #1f2937", borderRadius: 12, overflow: "hidden" }}>
-          <div
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* 상단 바 */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "8px 0",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 10,
+            background: "#0b1220",
+            border: "1px solid #1f2937",
+            borderRadius: 999,
+            padding: "8px 14px",
+            width: 380,
+          }}
+        >
+          <span style={{ opacity: 0.6 }}>🔍</span>
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search"
             style={{
-              display: "grid",
-              gridTemplateColumns: "160px 200px 140px 100px 1fr 1fr 120px",
-              padding: "14px 16px",
-              borderBottom: "1px solid #1f2937",
-              color: "#9ca3af",
-              fontSize: 12,
-              letterSpacing: 0.3,
-              textTransform: "uppercase",
+              flex: 1,
+              background: "transparent",
+              color: "#e5e7eb",
+              outline: "none",
+              border: "none",
+              fontSize: 14,
             }}
-          >
-            <div>Detection Result</div>
-            <div>Timestamp</div>
-            <div>IP</div>
-            <div>Method</div>
-            <div>URI</div>
-            <div>Agent</div>
-            <div>Body</div>
-          </div>
+          />
+        </div>
+        <div style={{ opacity: 0.8, fontSize: 12 }}>Admin • English 🇬🇧</div>
+      </div>
 
-          {logs.map((row) => (
+      <h1 style={{ fontSize: 32, fontWeight: 800, marginTop: 4 }}>Log Lists</h1>
+
+      {/* 필터 바 */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          background: "#0b1220",
+          border: "1px solid #1f2937",
+          borderRadius: 12,
+          padding: 10,
+        }}
+      >
+        <ToolbarButton label="Time" value={timeLabel} onClick={() => setTimeOpen(true)} />
+        <ToolbarButton
+          label="Order Type"
+          value={orderLabel}
+          onClick={() => {
+            setOrderTemp(orderApplied);
+            setOrderOpen(true);
+          }}
+        />
+        <ToolbarButton
+          label="Order Status"
+          value={statusLabel}
+          onClick={() => {
+            setStatusTemp(new Set(statusApplied));
+            setStatusOpen(true);
+          }}
+        />
+        <div style={{ flex: 1 }} />
+        <button
+          onClick={() => {
+            setRows(MOCK);
+            setOrderApplied("latest");
+            setStatusApplied(new Set());
+            setQ("");
+            setTimeApplied(null);
+          }}
+          style={{
+            padding: "10px 14px",
+            borderRadius: 10,
+            background: "#0b1220",
+            border: "1px solid #ef4444",
+            color: "#fca5a5",
+            fontWeight: 800,
+            cursor: "pointer",
+          }}
+        >
+          Reset Filter
+        </button>
+      </div>
+
+      {/* 테이블 */}
+      <style>{`
+        .grid-head, .grid-row {
+          display: grid;
+          grid-template-columns: 140px 200px 160px minmax(320px, 1fr) 160px 160px;
+          column-gap: 12px;
+          align-items: center;
+        }
+        @media (max-width: 1280px) {
+          .grid-head, .grid-row {
+            grid-template-columns: 120px 180px 150px minmax(240px, 1fr) 140px 140px;
+          }
+        }
+        .ua-cell {
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          cursor: pointer;
+        }
+        .time-cell { white-space: nowrap; }
+      `}</style>
+
+      <div
+        style={{
+          background: "#0b1220",
+          border: "1px solid #1f2937",
+          borderRadius: 12,
+          overflow: "hidden",
+        }}
+      >
+        <div
+          className="grid-head"
+          style={{
+            padding: "14px 16px",
+            borderBottom: "1px solid #1f2937",
+            color: "#9ca3af",
+            fontSize: 12,
+            letterSpacing: 0.3,
+            textTransform: "uppercase",
+          }}
+        >
+          <div>Label</div>
+          <div>session_id</div>
+          <div>ip_address</div>
+          <div>user_agent</div>
+          <div>end_time</div>
+          <div>start_time</div>
+        </div>
+
+        {list.map((row) => {
+          const start = fmtParts(row.start_time);
+          const end = fmtParts(row.end_time);
+          return (
             <div
               key={row.id}
-              style={{ display: "grid", gridTemplateColumns: "160px 200px 140px 100px 1fr 1fr 120px", padding: "16px", borderBottom: "1px solid #111827", alignItems: "start", gap: 12 }}
+              className="grid-row"
+              style={{ padding: "14px 16px", borderBottom: "1px solid #111827" }}
             >
-              <div>{row.detection === "Safe" && <Badge color="#34d399">Safe</Badge>}{row.detection === "Danger" && <Badge color="#ef4444">Danger</Badge>}{row.detection === "Detecting" && <Badge color="#6b7280">Detecting</Badge>}</div>
-              <div style={{ whiteSpace: "nowrap" }}>{new Date(row.timestamp).toUTCString()}</div>
-              <div>{row.ip}</div>
-              <div>{row.method}</div>
-              <div style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{row.uri}</div>
-              <div style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{row.agent}</div>
-              <div>{row.body}</div>
+              <div>
+                <Badge type={row.detection} />
+              </div>
+              <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {row.session_id}
+              </div>
+              <div style={{ whiteSpace: "nowrap" }}>{row.ip_address}</div>
+              <div
+                className="ua-cell"
+                onClick={(e) => onUAClick(e, row.user_agent)}
+                title="Click to view full user-agent"
+              >
+                {row.user_agent}
+              </div>
+              <div className="time-cell" title={`${end.ymd}-${end.hms}`}>
+                {end.ymd}-{end.hms}
+              </div>
+              <div className="time-cell" title={`${start.ymd}-${start.hms}`}>
+                {start.ymd}-{start.hms}
+              </div>
             </div>
-          ))}
-        </div>
-      </main>
+          );
+        })}
+      </div>
 
-      {/* Timestamp Modal */}
-      <Modal open={tsModalOpen} onClose={() => setTsModalOpen(false)} width={620}>
-        <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Timestamp</h3>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 16 }}>
-          {([
-            { key: "y", label: "Year", min: 1, max: 2100 },
-            { key: "m", label: "Month", min: 1, max: 12 },
-            { key: "d", label: "Date", min: 1, max: daysInMonth(tsTemp.y, tsTemp.m) },
-            { key: "h", label: "Hour", min: 0, max: 23 },
-            { key: "min", label: "Minute", min: 0, max: 59 },
-          ] as const).map((f) => (
-            <div key={f.key} style={{ background: "#0b1220", border: "1px solid #1f2937", borderRadius: 12 }}>
-              <div style={{ padding: "8px 12px", fontSize: 12, opacity: 0.8 }}>{f.label}</div>
-              <div style={{ display: "grid", gridTemplateRows: "auto auto auto", alignItems: "center" }}>
-                <button onClick={() => bump(f.key, +1 as 1)} style={{ padding: 8, borderTopLeftRadius: 12, borderTopRightRadius: 12, border: "none", background: "#111827", color: "#e5e7eb", cursor: "pointer" }}>
-                  ▲
-                </button>
-                <div style={{ textAlign: "center", fontWeight: 800, padding: 8 }}>
-                  {f.key === "y" && tsTemp.y}
-                  {f.key === "m" && pad2(tsTemp.m)}
-                  {f.key === "d" && pad2(tsTemp.d)}
-                  {f.key === "h" && pad2(tsTemp.h)}
-                  {f.key === "min" && pad2(tsTemp.min)}
+      {/* UA 전체보기 팝업 */}
+      <Pop open={uaPop.open} anchor={uaPop.rect} onClose={() => setUaPop({ open: false })}>
+        <div style={{ fontSize: 12, lineHeight: 1.5, wordBreak: "break-all" }}>{uaPop.text}</div>
+      </Pop>
+
+      {/* Time Modal */}
+      <Modal open={timeOpen} onClose={() => setTimeOpen(false)} width={620}>
+        <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Time Filter</h3>
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(5, 1fr)",
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          {timeDefs.map((f) => (
+            <div
+              key={f.key}
+              style={{
+                background: "#0b1220",
+                border: "1px solid #1f2937",
+                borderRadius: 12,
+              }}
+            >
+              <div style={{ padding: "8px 12px", fontSize: 12, opacity: 0.8 }}>
+                {f.label}
+              </div>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr",
+                  gap: 8,
+                  padding: "8px 12px 12px",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                  }}
+                >
+                  <button
+                    onClick={() => bump(f.key, -1)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #334155",
+                      background: "#0b1220",
+                      color: "#cbd5e1",
+                      cursor: "pointer",
+                    }}
+                  >
+                    −
+                  </button>
+                  <div style={{ fontWeight: 800, fontSize: 16, minWidth: 48, textAlign: "center" }}>
+                    {f.key === "y"
+                      ? timeTemp.y
+                      : f.key === "m"
+                      ? pad2(timeTemp.m)
+                      : f.key === "d"
+                      ? pad2(timeTemp.d)
+                      : f.key === "h"
+                      ? pad2(timeTemp.h)
+                      : pad2(timeTemp.min)}
+                  </div>
+                  <button
+                    onClick={() => bump(f.key, 1)}
+                    style={{
+                      padding: "6px 10px",
+                      borderRadius: 8,
+                      border: "1px solid #334155",
+                      background: "#0b1220",
+                      color: "#cbd5e1",
+                      cursor: "pointer",
+                    }}
+                  >
+                    +
+                  </button>
                 </div>
-                <button onClick={() => bump(f.key, -1 as -1)} style={{ padding: 8, borderBottomLeftRadius: 12, borderBottomRightRadius: 12, border: "none", background: "#111827", color: "#e5e7eb", cursor: "pointer" }}>
-                  ▼
-                </button>
               </div>
             </div>
           ))}
         </div>
-        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 12 }}>* 범위: 연도 1–2100, 월 1–12, 일은 월/윤년 반영, 시 0–23, 분 0–59</div>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <PillButton
-            active
+        <div style={{ display: "flex", justifyContent: "center", gap: 10 }}>
+          <Pill
             onClick={() => {
-              setTsApplied(tsTemp);
-              setTsModalOpen(false);
+              setTimeApplied(timeTemp);
+              setTimeOpen(false);
             }}
+            active
           >
             Apply Now
-          </PillButton>
+          </Pill>
+          <Pill
+            onClick={() => {
+              setTimeApplied(null);
+              setTimeOpen(false);
+            }}
+          >
+            Clear
+          </Pill>
         </div>
       </Modal>
 
-      {/* Order Type Modal */}
-      <Modal open={orderTypeOpen} onClose={() => setOrderTypeOpen(false)} width={600}>
-        <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 14 }}>Select Order Type</h3>
-        <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
-          <PillButton active={orderTemp === "latest"} onClick={() => setOrderTemp("latest")}>Latest</PillButton>
-          <PillButton active={orderTemp === "earliest"} onClick={() => setOrderTemp("earliest")}>Earliest</PillButton>
-          <PillButton active={orderTemp === "user-agent"} onClick={() => setOrderTemp("user-agent")}>User-Agent</PillButton>
+      {/* Order Modal */}
+      <Modal open={orderOpen} onClose={() => setOrderOpen(false)} width={600}>
+        <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 14 }}>
+          Select Order Type
+        </h3>
+        <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+          <Pill
+            active={orderTemp === "latest"}
+            onClick={() => setOrderTemp("latest")}
+          >
+            Latest
+          </Pill>
+          <Pill
+            active={orderTemp === "earliest"}
+            onClick={() => setOrderTemp("earliest")}
+          >
+            Earliest
+          </Pill>
+          <Pill
+            active={orderTemp === "user-agent"}
+            onClick={() => setOrderTemp("user-agent")}
+          >
+            User-Agent
+          </Pill>
         </div>
         <div style={{ display: "flex", justifyContent: "center" }}>
-          <PillButton
+          <Pill
             active
             onClick={() => {
               setOrderApplied(orderTemp);
-              setOrderTypeOpen(false);
+              setOrderOpen(false);
             }}
           >
             Apply Now
-          </PillButton>
+          </Pill>
         </div>
       </Modal>
 
-      {/* Order Status Modal */}
+      {/* Status Modal */}
       <Modal open={statusOpen} onClose={() => setStatusOpen(false)} width={640}>
-        <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 14 }}>Select Order Status</h3>
-        <div style={{ display: "flex", gap: 10, marginBottom: 18 }}>
-          <PillButton active={statusTemp.has("Safe")} onClick={() => toggleStatus("Safe")}>Safe</PillButton>
-          <PillButton active={statusTemp.has("Danger")} onClick={() => toggleStatus("Danger")}>Danger</PillButton>
-          <PillButton active={statusTemp.has("Detecting")} onClick={() => toggleStatus("Detecting")}>Detecting</PillButton>
+        <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 14 }}>
+          Select Order Status
+        </h3>
+        <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
+          <Pill
+            active={statusTemp.has("Safe")}
+            onClick={() => toggleStatus("Safe")}
+          >
+            Safe
+          </Pill>
+          <Pill
+            active={statusTemp.has("Danger")}
+            onClick={() => toggleStatus("Danger")}
+          >
+            Danger
+          </Pill>
+          <Pill
+            active={statusTemp.has("Detecting")}
+            onClick={() => toggleStatus("Detecting")}
+          >
+            Detecting
+          </Pill>
         </div>
-        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 10 }}>* 여러 개를 동시에 선택할 수 있습니다.</div>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <PillButton
+        <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 10 }}>
+          * 여러 개를 동시에 선택할 수 있습니다.
+        </div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 10 }}>
+          <Pill
             active
             onClick={() => {
               setStatusApplied(new Set(statusTemp));
@@ -301,7 +704,14 @@ export default function LogList() {
             }}
           >
             Apply Now
-          </PillButton>
+          </Pill>
+          <Pill
+            onClick={() => {
+              setStatusTemp(new Set());
+            }}
+          >
+            Clear Temp
+          </Pill>
         </div>
       </Modal>
     </div>

@@ -1,0 +1,18 @@
+# --- DB 덤프 & 임시 산출물 ---
+/data_only.sql
+/local_full.dump
+/local_backup.dump
+
+# --- 환경변수 ---
+/.env
+/.env.shared
+**/.env
+**/.env.local
+**/.env.*.local
+
+# --- 로그/런타임 파일 ---
+/modsec_logs/
+*.log
+
+# --- node_modules 전역 ---
+**/node_modules/
