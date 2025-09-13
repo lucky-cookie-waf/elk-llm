@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "dev": "node server.js",
-    "generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "postinstall": "npm run prisma:generate"
   },
   "dependencies": {
     "@prisma/client": "^5.16.1",
@@ -15,5 +16,8 @@
   },
   "devDependencies": {
     "prisma": "^5.16.1"
+  },
+  "prisma": {
+    "schema": "../log_collector/prisma/schema.prisma"
   }
 }
