@@ -13,6 +13,10 @@ datasource db {
 
 enum sessionLabel {
   NORMAL
+  SQL_INJECTION
+  CODE_INJECTION
+  PATH_TRAVERSAL
+  //레거시 호환
   MALICIOUS
 
   @@map("SessionLabel") //DB 실제 enum 타입명과 매핑
@@ -50,6 +54,12 @@ model RawLog {
   @@index([sessionId])
 }
 
+enum confidenceLevel {
+  HIGH
+  LOW
+  @@map("ConfidenceLevel")
+}
+
 model Session {
   id           Int      @id @default(autoincrement())
   session_id   String   @unique @map("session_id")
@@ -60,9 +70,14 @@ model Session {
   created_at   DateTime @default(now()) @map("created_at")
 
   //분류 결과 저장 (처음에는 null -> 분류 후 값을 채움)
-  label        sessionLabel?
+  label           sessionLabel?
+  confidence      confidenceLevel?
+  classifier_raw  String? @db.Text
+  classification  String? @map("classification")
   rawLogs      RawLog [] //역참조
 
+  @@index([label],           name: "idx_session_label")
+  @@index([classification], name: "idx_session_classification")
   @@map("Session")
 }
 

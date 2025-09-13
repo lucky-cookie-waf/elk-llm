@@ -31,7 +31,9 @@ services:
       retries: 20
 
   be_rules:
-    build: ./BE_rules
+    build:
+      context: .
+      dockerfile: BE_rules/Dockerfile
     container_name: be_rules
     env_file:
       - ./BE_rules/.env #서비스 자체 설정
@@ -81,7 +83,9 @@ services:
     restart: always
     env_file:
       - ./.env.shared          # ⬅️ Prisma의 DATABASE_URL 등
+      - ./log_collector/.env # 안되면 주석처리하고 시도해보기
     environment:
+      USE_ANY_HIT_GUARD: "0" # 0=가드 OFF, (없거나 0이 아니면 ON)
       NODE_OPTIONS: "--dns-result-order=ipv4first"
     dns:
       - 1.1.1.1
@@ -104,12 +108,10 @@ services:
     volumes:
       - ./log_collector:/app/log_collector
     env_file:
-      - ./.env.shared          # ⬅️ 여기에도 같은 DATABASE_URL 사용
+      - ./.env.shared         # ← 따옴표 없는 버전 권장
     environment:
       NODE_OPTIONS: "--dns-result-order=ipv4first"
     dns: ["1.1.1.1","8.8.8.8"]
-    #depends_on:
-      #- postgres
     networks:
       - web-network
     ports:
@@ -118,8 +120,10 @@ services:
       - sh
       - -lc
       - >
+        apt-get update &&
+        apt-get install -y --no-install-recommends openssl ca-certificates &&
         npx prisma@latest studio
-        --schema prisma/schema.prisma
+        --schema /app/log_collector/prisma/schema.prisma
         --port 5555
         --hostname 0.0.0.0
         --browser none
