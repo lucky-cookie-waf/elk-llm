@@ -6,7 +6,7 @@
 6. 전체적인 디자인 통일
 
 Client
-1. npm install로 node_modules 생성
+1. npm install로 node_modules(크기 너무 커서 git에 안 올라감) 생성
 2. npm start
 
 ## ModSecurity + PostgreSQL + 세션화
