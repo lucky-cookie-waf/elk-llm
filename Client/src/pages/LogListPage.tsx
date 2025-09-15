@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 /* ========== time helpers (non-ISO도 안전하게 파싱) ========== */
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -587,9 +588,22 @@ export default function LogListPage() {
               <div>
                 <Badge type={row.detection} />
               </div>
-              <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+
+              {/* session_id를 RawLog로 이동하는 링크로 변경 */}
+              <Link
+                to={`/rawlog/${encodeURIComponent(row.session_id)}`}
+                style={{
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  color: "#3b82f6",
+                  textDecoration: "underline",
+                  cursor: "pointer",
+                }}
+              >
                 {row.session_id}
-              </div>
+              </Link>
+
               <div style={{ whiteSpace: "nowrap" }}>{row.ip_address}</div>
               <div
                 className="ua-cell"
@@ -607,7 +621,7 @@ export default function LogListPage() {
             </div>
           );
         })}
-      </div>
+      </div> {/* ⬅️ 이 닫힘이 누락돼서 오류가 났었습니다. */}
 
       {/* UA 전체보기 팝업 */}
       <Pop open={uaPop.open} anchor={uaPop.rect} onClose={() => setUaPop({ open: false })}>
@@ -625,13 +639,7 @@ export default function LogListPage() {
             marginBottom: 16,
           }}
         >
-          {[
-            { key: "y", label: "Year" },
-            { key: "m", label: "Month" },
-            { key: "d", label: "Date" },
-            { key: "h", label: "Hour" },
-            { key: "min", label: "Minute" },
-          ].map((f: any) => (
+          {timeDefs.map((f) => (
             <div
               key={f.key}
               style={{

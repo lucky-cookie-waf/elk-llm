@@ -5,6 +5,7 @@ import RulePage from "./pages/RulePage";
 import LogListPage from "./pages/LogListPage";
 import SettingsPage from "./pages/SettingPage";
 import LogoutPage from "./pages/LogoutPage";
+import RawLogPage from "./pages/RawLogPage"; // ⬅️ 추가
 
 const App: React.FC = () => {
   const linkStyle: React.CSSProperties = {
@@ -69,6 +70,7 @@ const App: React.FC = () => {
             <Route path="/loglists" element={<LogListPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/logout" element={<LogoutPage />} />
+            <Route path="/rawlog/:sessionId" element={<RawLogPage />} /> {/* ⬅️ 추가 */}
           </Routes>
         </main>
       </div>
