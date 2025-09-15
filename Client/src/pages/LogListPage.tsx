@@ -1,9 +1,16 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-/* ========== time helpers ========== */
+/* ========== time helpers (non-ISO도 안전하게 파싱) ========== */
 const pad2 = (n: number) => String(n).padStart(2, "0");
-const fmtParts = (iso: string) => {
-  const d = new Date(iso);
+const parseLoose = (s: string) => {
+  if (!s) return new Date(NaN);
+  // "YYYY-MM-DD hh:mm:ss" → "YYYY-MM-DDThh:mm:ss"
+  const t = s.includes("T") ? s : s.replace(" ", "T");
+  const d = new Date(t);
+  return d;
+};
+const fmtParts = (isoLike: string) => {
+  const d = parseLoose(isoLike);
   const yy = String(d.getFullYear()).slice(-2);
   const MM = pad2(d.getMonth() + 1);
   const DD = pad2(d.getDate());
@@ -22,14 +29,27 @@ const stampLabel = (y: number, m: number, d: number, h: number, min: number) =>
 type Status = "Safe" | "Danger" | "Detecting";
 type OrderType = "latest" | "earliest" | "user-agent";
 type TimeKey = "y" | "m" | "d" | "h" | "min";
+
+type SessionRowFromAPI = {
+  id: number | string;
+  session_id: string;
+  ip_address: string | null;
+  user_agent: string | null;
+  start_time: string; // e.g., "2025-07-31 03:38:12"
+  end_time: string;   // e.g., "2025-07-31 03:38:16"
+  created_at?: string;
+  label?: string | null;           // e.g., "NORMAL"
+  classification?: string | null;  // optional alternative
+};
+
 type LogItem = {
   id: string;
   detection: Status;
   session_id: string;
   ip_address: string;
   user_agent: string;
-  start_time: string; // ISO
-  end_time: string; // ISO
+  start_time: string; // keep original string; our fmt handles non-ISO
+  end_time: string;
 };
 
 /* ========== sample MOCK (Reset용) ========== */
@@ -40,8 +60,8 @@ const MOCK: LogItem[] = Array.from({ length: 9 }).map((_, i) => ({
   ip_address: `172.26.0.${i + 1}`,
   user_agent:
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.130 Safari/537.36",
-  start_time: "2020-07-17T11:23:00Z",
-  end_time: "2020-07-17T12:23:34Z",
+  start_time: "2020-07-17 11:23:00",
+  end_time: "2020-07-17 12:23:34",
 }));
 
 /* ========== small UI atoms ========== */
@@ -203,21 +223,65 @@ const Pop: React.FC<{
   );
 };
 
+/* ========== helpers: API mapping ========== */
+function toDetection(label?: string | null, classification?: string | null): Status {
+  const L = (label || "").toUpperCase();
+  const C = (classification || "").toUpperCase();
+  if (["MALICIOUS", "ATTACK", "DANGER", "SUSPICIOUS"].some((k) => C.includes(k) || L.includes(k))) {
+    return "Danger";
+  }
+  if (L === "NORMAL" || L === "SAFE") return "Safe";
+  return "Detecting";
+}
+
+function mapRow(item: SessionRowFromAPI): LogItem {
+  return {
+    id: String(item.id),
+    detection: toDetection(item.label, item.classification),
+    session_id: String(item.session_id ?? ""),
+    ip_address: item.ip_address ?? "-",
+    user_agent: item.user_agent ?? "(empty)",
+    start_time: item.start_time,
+    end_time: item.end_time,
+  };
+}
+
 /* ========== Page ========== */
 export default function LogListPage() {
   /* 데이터 로드 */
   const [rows, setRows] = useState<LogItem[]>([]);
+  const [connected, setConnected] = useState<null | boolean>(null);
+
   useEffect(() => {
-    fetch("/session")
-      .then((res) => res.json())
-      .then((data) => {
-        if (Array.isArray(data?.data)) setRows(data.data);
-        else if (Array.isArray(data)) setRows(data);
-        else setRows([]);
-      })
-      .catch((err) => {
-        alert("세션 목록을 불러오지 못했습니다: " + err);
-      });
+    const qs = "label=NORMAL&page=1&pageSize=100&sort=end_time&order=desc";
+
+    const tryFetch = async (url: string) => {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const data = await res.json();
+      const arr: SessionRowFromAPI[] = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data)
+        ? data
+        : [];
+      return arr.map(mapRow);
+    };
+
+    (async () => {
+      try {
+        let list = await tryFetch(`/api/session?${qs}`);
+        if (!list.length) {
+          // 백엔드에 /api prefix가 없을 수도 있으니 재시도
+          list = await tryFetch(`/session?${qs}`);
+        }
+        setRows(list);
+        setConnected(true);
+      } catch (e) {
+        console.error("Failed to fetch sessions:", e);
+        setRows([]);
+        setConnected(false);
+      }
+    })();
   }, []);
 
   /* 검색 */
@@ -308,8 +372,8 @@ export default function LogListPage() {
       a = a.filter(
         (r) =>
           r.session_id.toLowerCase().includes(s) ||
-          r.ip_address.toLowerCase().includes(s) ||
-          r.user_agent.toLowerCase().includes(s)
+          (r.ip_address || "").toLowerCase().includes(s) ||
+          (r.user_agent || "").toLowerCase().includes(s)
       );
     }
 
@@ -322,15 +386,15 @@ export default function LogListPage() {
         timeApplied.h,
         timeApplied.min
       ).getTime();
-      a = a.filter((r) => new Date(r.end_time).getTime() >= t);
+      a = a.filter((r) => parseLoose(r.end_time).getTime() >= t);
     }
 
     // 정렬
     if (orderApplied === "user-agent")
-      a.sort((x, y) => x.user_agent.localeCompare(y.user_agent));
+      a.sort((x, y) => (x.user_agent || "").localeCompare(y.user_agent || ""));
     else if (orderApplied === "earliest")
-      a.sort((x, y) => (x.start_time > y.start_time ? 1 : -1));
-    else a.sort((x, y) => (x.end_time < y.end_time ? 1 : -1)); // latest
+      a.sort((x, y) => (parseLoose(x.start_time) > parseLoose(y.start_time) ? 1 : -1));
+    else a.sort((x, y) => (parseLoose(x.end_time) < parseLoose(y.end_time) ? 1 : -1)); // latest
 
     return a;
   }, [rows, statusApplied, orderApplied, q, timeApplied]);
@@ -382,7 +446,30 @@ export default function LogListPage() {
             }}
           />
         </div>
-        <div style={{ opacity: 0.8, fontSize: 12 }}>Admin • English 🇬🇧</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ opacity: 0.8, fontSize: 12 }}>Admin • English 🇬🇧</div>
+          <span
+            title={
+              connected === null
+                ? "Checking..."
+                : connected
+                ? `API connected (${rows.length})`
+                : "No data / fetch failed"
+            }
+            style={{
+              padding: "2px 8px",
+              borderRadius: 999,
+              border: "1px solid #1f2937",
+              background:
+                connected === null ? "#7c3aed" : connected ? "#0f766e" : "#7f1d1d",
+              color: "#e5e7eb",
+              fontWeight: 700,
+              fontSize: 11,
+            }}
+          >
+            {connected === null ? "Checking" : connected ? "Connected" : "Disconnected"}
+          </span>
+        </div>
       </div>
 
       <h1 style={{ fontSize: 32, fontWeight: 800, marginTop: 4 }}>Log Lists</h1>
@@ -538,7 +625,13 @@ export default function LogListPage() {
             marginBottom: 16,
           }}
         >
-          {timeDefs.map((f) => (
+          {[
+            { key: "y", label: "Year" },
+            { key: "m", label: "Month" },
+            { key: "d", label: "Date" },
+            { key: "h", label: "Hour" },
+            { key: "min", label: "Minute" },
+          ].map((f: any) => (
             <div
               key={f.key}
               style={{
