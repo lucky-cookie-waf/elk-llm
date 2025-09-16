@@ -72,16 +72,21 @@ export default function RulePage() {
         const res = await fetch("/api/rules?limit=20&offset=0");
         const data = await res.json();
 
-        // 백엔드에서 내려주는 items -> RuleRow 변환
-        const mapped: RuleRow[] = data.items.map((item: any) => ({
-          id: String(item.id),
-          attack: item.rule_name ?? "Unknown",
-          suggestion: item.operator ?? "",
-          explanation: item.logdata ?? "",
-          date: new Date(item.created_at).toLocaleString(),
-          status: "Processing", // DB에 없음 → 프론트 전용 기본값
-        }));
-        setRows(mapped);
+        // 응답 데이터 처리 전에 확인
+        if (data && data.items) {
+          // 백엔드에서 내려주는 items -> RuleRow 변환
+          const mapped: RuleRow[] = data.items.map((item: any) => ({
+            id: String(item.id),
+            attack: item.rule_name ?? "Unknown",
+            suggestion: item.operator ?? "",
+            explanation: item.logdata ?? "",
+            date: new Date(item.created_at).toLocaleString(),
+            status: "Processing", // DB에 없음 → 프론트 전용 기본값
+          }));
+          setRows(mapped);
+        } else {
+          console.error("No items found in response data");
+        }
       } catch (err) {
         console.error("Failed to fetch rules", err);
       } finally {
