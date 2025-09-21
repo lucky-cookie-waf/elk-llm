@@ -1,6 +1,6 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 
-/* 카드 컴포넌트 */
+/* -------------------- Card / Badge -------------------- */
 const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({
   children,
   style,
@@ -19,13 +19,11 @@ const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }>
   </div>
 );
 
-/* 뱃지 */
-const StatBadge: React.FC<{
-  label: string;
-  value: string;
-  sub?: React.ReactNode;
-  rightIcon?: React.ReactNode;
-}> = ({ label, value, sub, rightIcon }) => (
+const StatBadge: React.FC<{ label: string; value: string; rightIcon?: React.ReactNode }> = ({
+  label,
+  value,
+  rightIcon,
+}) => (
   <Card
     style={{
       display: "flex",
@@ -35,12 +33,7 @@ const StatBadge: React.FC<{
   >
     <div>
       <div style={{ opacity: 0.7, fontSize: 12, marginBottom: 8 }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: 0.2 }}>
-        {value}
-      </div>
-      {sub && (
-        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>{sub}</div>
-      )}
+      <div style={{ fontSize: 28, fontWeight: 900 }}>{value}</div>
     </div>
     <div
       style={{
@@ -57,25 +50,26 @@ const StatBadge: React.FC<{
   </Card>
 );
 
-/* 선 그래프 */
+/* -------------------- Charts -------------------- */
 const LineChart: React.FC<{ width: number; height: number; data: number[] }> = ({
   width,
   height,
   data,
 }) => {
   const max = Math.max(...data) || 1;
-  const min = 0;
-  const pad = 24;
+  const pad = 36;
   const w = width - pad * 2;
   const h = height - pad * 2;
-  const stepX = w / (data.length - 1);
+  const stepX = data.length > 1 ? w / (data.length - 1) : 0;
+
   const points = data
     .map((v, i) => {
       const x = pad + i * stepX;
-      const y = pad + h - ((v - min) / (max - min)) * h;
+      const y = pad + h - (v / max) * h;
       return `${x},${y}`;
     })
     .join(" ");
+
   return (
     <svg width={width} height={height} style={{ display: "block" }}>
       {[0.25, 0.5, 0.75, 1].map((g, idx) => (
@@ -100,21 +94,36 @@ const LineChart: React.FC<{ width: number; height: number; data: number[] }> = (
         const y = pad + h - (v / max) * h;
         return <circle key={i} cx={x} cy={y} r={3.5} fill="#60a5fa" />;
       })}
+      {data.map((_, i) => {
+        const x = pad + i * stepX;
+        return (
+          <text
+            key={i}
+            x={x}
+            y={height - 6}
+            textAnchor="middle"
+            fontSize={11}
+            fill="#9ca3af"
+          >
+            {i + 1}
+          </text>
+        );
+      })}
     </svg>
   );
 };
 
-/* 도넛 그래프 */
 const DonutChart: React.FC<{
   size: number;
   thickness?: number;
   values: { label: string; value: number; color: string }[];
 }> = ({ size, thickness = 34, values }) => {
-  const total = values.reduce((a, b) => a + b.value, 0) || 1;
+  const total = values.reduce((s, v) => s + v.value, 0) || 1;
   const radius = (size - thickness) / 2;
-  const cx = size / 2,
-    cy = size / 2;
+  const cx = size / 2;
+  const cy = size / 2;
   let acc = 0;
+
   return (
     <svg width={size} height={size}>
       <circle
@@ -148,127 +157,278 @@ const DonutChart: React.FC<{
       })}
       <text
         x={cx}
-        y={cy + 6}
+        y={cy}
         textAnchor="middle"
-        fontSize={22}
+        dominantBaseline="middle"
+        fontSize={12}
         fill="#e5e7eb"
-        fontWeight={800}
       >
-        Attacks
+        {total}
       </text>
     </svg>
   );
 };
 
-/* 간단 달력 팝업 */
-const CalendarPopup: React.FC<{
-  selectedDate: Date;
-  onSelect: (date: Date) => void;
-}> = ({ selectedDate, onSelect }) => {
-  const [currentMonth, setCurrentMonth] = useState(
-    new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1)
-  );
-
-  const year = currentMonth.getFullYear();
-  const month = currentMonth.getMonth();
-
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const startDay = new Date(year, month, 1).getDay();
-
-  const days: (number | null)[] = Array(startDay)
-    .fill(null)
-    .concat(Array.from({ length: daysInMonth }, (_, i) => i + 1));
-
+/* -------------------- Popup -------------------- */
+const Popup: React.FC<{
+  visible: boolean;
+  onClose: () => void;
+  children?: React.ReactNode;
+}> = ({ visible, onClose, children }) => {
+  if (!visible) return null;
   return (
     <div
       style={{
-        position: "absolute",
-        right: 0,
-        marginTop: 8,
-        background: "#111827",
-        padding: 12,
-        borderRadius: 8,
-        zIndex: 100,
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,0.6)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 2000,
       }}
+      onClick={onClose}
     >
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-        <button onClick={() => setCurrentMonth(new Date(year, month - 1, 1))}>{"<"}</button>
-        <div>
-          {currentMonth.toLocaleString("default", { month: "long" })} {year}
-        </div>
-        <button onClick={() => setCurrentMonth(new Date(year, month + 1, 1))}>{">"}</button>
-      </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 }}>
-        {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((d) => (
-          <div key={d} style={{ textAlign: "center", fontSize: 12, opacity: 0.7 }}>
-            {d}
-          </div>
-        ))}
-        {days.map((day, idx) => (
-          <div
-            key={idx}
-            style={{
-              textAlign: "center",
-              padding: 6,
-              cursor: day ? "pointer" : "default",
-              background:
-                day === selectedDate.getDate() &&
-                month === selectedDate.getMonth() &&
-                year === selectedDate.getFullYear()
-                  ? "#2563eb"
-                  : "transparent",
-              borderRadius: 6,
-            }}
-            onClick={() => day && onSelect(new Date(year, month, day))}
-          >
-            {day}
-          </div>
-        ))}
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "#0b1220",
+          border: "1px solid #1f2937",
+          padding: 16,
+          borderRadius: 12,
+          minWidth: 320,
+        }}
+      >
+        {children}
       </div>
     </div>
   );
 };
 
-/* 페이지 */
+/* -------------------- YearPicker -------------------- */
+const YearPicker: React.FC<{ value: number; onChange: (v: number) => void }> = ({
+  value,
+  onChange,
+}) => {
+  const years = [2025, 2024, 2023, 2022, 2021, 2020];
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(Number(e.target.value))}
+      style={{
+        padding: "6px 10px",
+        borderRadius: 8,
+        border: "1px solid #1f2937",
+        background: "#0b1220",
+        color: "#e5e7eb",
+      }}
+    >
+      {years.map((y) => (
+        <option key={y} value={y}>
+          {y}
+        </option>
+      ))}
+    </select>
+  );
+};
+
+/* -------------------- MiniCalendar -------------------- */
+type MiniCalendarProps = {
+  year: number;
+  month: number; // 0-11
+  selected?: Date | null;
+  onSelect: (d: Date) => void;
+};
+
+const MiniCalendar: React.FC<MiniCalendarProps> = ({
+  year,
+  month,
+  selected,
+  onSelect,
+}) => {
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const leading = new Array(firstDay).fill(null);
+  const monthDays = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const days = leading.concat(monthDays);
+
+  const isSameDate = (d: Date, y: number, m: number, day: number) =>
+    d &&
+    d.getFullYear() === y &&
+    d.getMonth() === m &&
+    d.getDate() === day;
+
+  return (
+    <div style={{ color: "#e5e7eb" }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: 6,
+          marginBottom: 8,
+        }}
+      >
+        {["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].map((s) => (
+          <div
+            key={s}
+            style={{ textAlign: "center", opacity: 0.6, fontSize: 12 }}
+          >
+            {s}
+          </div>
+        ))}
+      </div>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(7, 1fr)",
+          gap: 6,
+        }}
+      >
+        {days.map((d, idx) =>
+          d === null ? (
+            <div key={idx} />
+          ) : (
+            <div
+              key={idx}
+              onClick={() => onSelect(new Date(year, month, d))}
+              style={{
+                padding: "8px 6px",
+                textAlign: "center",
+                borderRadius: 8,
+                cursor: "pointer",
+                background:
+                  selected && isSameDate(selected, year, month, d)
+                    ? "#2563eb"
+                    : "#1f2937",
+                color:
+                  selected && isSameDate(selected, year, month, d)
+                    ? "#ffffff"
+                    : "#e5e7eb",
+              }}
+            >
+              {d}
+            </div>
+          )
+        )}
+      </div>
+    </div>
+  );
+};
+
+/* -------------------- Main -------------------- */
+const clampYear = (y: number) => Math.max(2020, Math.min(2025, y));
+
 const DashboardPage: React.FC = () => {
- console.log("✅ 최신 DashboardPage 코드가 로드됨 at", new Date().toLocaleString());
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [showPickerGraph, setShowPickerGraph] = useState(false);
-  const [showPickerTable, setShowPickerTable] = useState(false);
+  const [attacksData, setAttacksData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [apiStatus, setApiStatus] = useState("Checking...");
 
-  const line = [10, 40, 120, 260, 210, 320, 752, 340, 410, 280, 260, 40];
-  const donutVals = [
-    { label: "SQL injection", value: 34249, color: "#93c5fd" },
-    { label: "XSS Attack", value: 1420, color: "#60a5fa" },
-  ];
+  const now = new Date();
+  const [insightYear, setInsightYear] = useState(clampYear(now.getFullYear()));
+  const [insightMonth, setInsightMonth] = useState(now.getMonth());
+  const [monthPopupOpen, setMonthPopupOpen] = useState(false);
 
-  const attacks = [
-    {
-      type: "SQL Injection",
-      ip: "72.14.201.174",
-      timestamp: "2025-09-05T12:53:00",
-      status: 404,
-    },
-    {
-      type: "XSS Attack",
-      ip: "192.168.0.10",
-      timestamp: "2025-09-05T14:30:00",
-      status: 200,
-    },
-    {
-      type: "SQL Injection",
-      ip: "10.0.0.5",
-      timestamp: "2025-09-04T10:10:00",
-      status: 403,
-    },
-  ];
+  const [detailYear, setDetailYear] = useState(now.getFullYear());
+  const [detailMonth, setDetailMonth] = useState(now.getMonth());
+  const [detailSelectedDate, setDetailSelectedDate] =
+    useState<Date | null>(now);
+  const [dayPopupOpen, setDayPopupOpen] = useState(false);
 
-  const filteredAttacks = attacks.filter((attack) => {
-    const d = new Date(attack.timestamp);
+  const API_BASE = process.env.REACT_APP_API_BASE || "";
+
+  useEffect(() => {
+    let mounted = true;
+    const fetchData = async () => {
+      setLoading(true);
+      try {
+        const url = `${API_BASE}/session?label=MALICIOUS&page=1&pageSize=500&sort=end_time&order=desc`;
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const json = await res.json();
+        let items: any[] = [];
+        if (Array.isArray(json)) items = json;
+        else if (Array.isArray(json.data)) items = json.data;
+        else if (Array.isArray(json.items)) items = json.items;
+        else items = [];
+
+        if (mounted) {
+          setAttacksData(items);
+          setApiStatus("Connected ✅");
+        }
+      } catch (err: any) {
+        if (mounted) {
+          setApiStatus(
+            `API 연결 실패 ❌ (${err?.message ?? "Unknown"})`
+          );
+          setAttacksData([]);
+        }
+      } finally {
+        if (mounted) setLoading(false);
+      }
+    };
+    fetchData();
+    return () => {
+      mounted = false;
+    };
+  }, [API_BASE]);
+
+  // daily counts for selected month
+  const daysInSelectedMonth = new Date(
+    insightYear,
+    insightMonth + 1,
+    0
+  ).getDate();
+  const dailyCounts = Array.from({ length: daysInSelectedMonth }, (_, d) =>
+    attacksData.filter((atk) => {
+      const t = new Date(atk.end_time);
+      return (
+        t.getFullYear() === insightYear &&
+        t.getMonth() === insightMonth &&
+        t.getDate() === d + 1
+      );
+    }).length
+  );
+
+  // donut data
+  const filteredForInsightMonth = attacksData.filter((atk) => {
+    const t = new Date(atk.end_time);
     return (
-      d.getDate() === selectedDate.getDate() &&
-      d.getMonth() === selectedDate.getMonth() &&
-      d.getFullYear() === selectedDate.getFullYear()
+      t.getFullYear() === insightYear && t.getMonth() === insightMonth
+    );
+  });
+  const typeCounts: Record<string, number> = {};
+  filteredForInsightMonth.forEach((atk) => {
+    const key = atk.attack_type ?? atk.type ?? atk.label ?? "Unknown";
+    typeCounts[key] = (typeCounts[key] || 0) + 1;
+  });
+  const palette = [
+    "#93c5fd",
+    "#60a5fa",
+    "#3b82f6",
+    "#2563eb",
+    "#1d4ed8",
+    "#7c3aed",
+    "#ec4899",
+    "#f97316",
+    "#f59e0b",
+    "#10b981",
+  ];
+  const donutValues = Object.entries(typeCounts).map(
+    ([label, value], i) => ({
+      label,
+      value,
+      color: palette[i % palette.length],
+    })
+  );
+
+  // details
+  const filteredDetails = attacksData.filter((atk) => {
+    if (!detailSelectedDate) return false;
+    const t = new Date(atk.end_time);
+    return (
+      t.getFullYear() === detailSelectedDate.getFullYear() &&
+      t.getMonth() === detailSelectedDate.getMonth() &&
+      t.getDate() === detailSelectedDate.getDate()
     );
   });
 
@@ -282,19 +442,12 @@ const DashboardPage: React.FC = () => {
       }}
     >
       <main style={{ flex: 1, padding: 24 }}>
-        {/* 상단 */}
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-          }}
-        >
-          <h1 style={{ fontSize: 32, fontWeight: 800 }}>Dashboard</h1>
-          <div style={{ opacity: 0.8, fontSize: 12 }}>Admin • English 🇬🇧</div>
+        <h1 style={{ fontSize: 32, fontWeight: 800 }}>Dashboard</h1>
+        <div style={{ marginTop: 8, fontSize: 12, opacity: 0.7 }}>
+          API Status: {apiStatus}
         </div>
 
-        {/* 카드 */}
+        {/* Stat */}
         <div
           style={{
             display: "grid",
@@ -304,18 +457,20 @@ const DashboardPage: React.FC = () => {
           }}
         >
           <StatBadge
-            label="Total Attack"
-            value="10293"
-            sub={<span style={{ color: "#22c55e" }}>▲ 1.3% Up from past week</span>}
+            label="Total Attacks"
+            value={String(attacksData.length)}
           />
           <StatBadge
-            label="Recent Attacks"
-            value={new Date().toLocaleString()}
-            rightIcon={<span>⏱️</span>}
+            label="Recent Attack"
+            value={
+              attacksData.length > 0
+                ? new Date(attacksData[0].end_time).toLocaleString()
+                : "N/A"
+            }
           />
         </div>
 
-        {/* 그래프 */}
+        {/* Insights */}
         <Card style={{ marginTop: 18 }}>
           <div
             style={{
@@ -325,29 +480,26 @@ const DashboardPage: React.FC = () => {
               marginBottom: 12,
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: 18 }}>Attack Insights</div>
-            <div style={{ position: "relative" }}>
+            <div style={{ fontWeight: 800, fontSize: 18 }}>
+              Attack Insights
+            </div>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <div style={{ fontSize: 13, color: "#9ca3af" }}>
+                {insightYear}년 {insightMonth + 1}월
+              </div>
               <button
-                onClick={() => setShowPickerGraph(!showPickerGraph)}
+                onClick={() => setMonthPopupOpen(true)}
                 style={{
+                  background: "#1f2937",
                   padding: "6px 10px",
                   borderRadius: 8,
-                  border: "1px solid #1f2937",
-                  background: "#0b1220",
+                  border: "none",
                   color: "#e5e7eb",
+                  cursor: "pointer",
                 }}
               >
-                {selectedDate.toLocaleDateString("en-GB")} ▾
+                📅 Select Month
               </button>
-              {showPickerGraph && (
-                <CalendarPopup
-                  selectedDate={selectedDate}
-                  onSelect={(date) => {
-                    setSelectedDate(date);
-                    setShowPickerGraph(false);
-                  }}
-                />
-              )}
             </div>
           </div>
 
@@ -359,7 +511,7 @@ const DashboardPage: React.FC = () => {
             }}
           >
             <Card style={{ padding: 0, height: 320 }}>
-              <LineChart width={760} height={320} data={line} />
+              <LineChart width={760} height={320} data={dailyCounts} />
             </Card>
             <Card
               style={{
@@ -370,12 +522,29 @@ const DashboardPage: React.FC = () => {
                 height: 320,
               }}
             >
-              <DonutChart size={300} values={donutVals} />
+              {donutValues.length > 0 ? (
+                <div style={{ textAlign: "center" }}>
+                  <DonutChart size={260} values={donutValues} />
+                  <div
+                    style={{
+                      marginTop: 8,
+                      color: "#9ca3af",
+                      fontSize: 13,
+                    }}
+                  >
+                    Types in selected month
+                  </div>
+                </div>
+              ) : (
+                <div style={{ color: "#9ca3af" }}>
+                  No data for this month
+                </div>
+              )}
             </Card>
           </div>
         </Card>
 
-        {/* Attack Details */}
+        {/* Details */}
         <Card style={{ marginTop: 18 }}>
           <div
             style={{
@@ -385,96 +554,223 @@ const DashboardPage: React.FC = () => {
               marginBottom: 12,
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: 18 }}>Attack Details</div>
-            <div style={{ position: "relative" }}>
+            <div style={{ fontWeight: 800, fontSize: 18 }}>
+              Attack Details
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{ fontSize: 13, color: "#9ca3af" }}>
+                {detailSelectedDate
+                  ? detailSelectedDate.toLocaleDateString()
+                  : "No date selected"}
+              </div>
               <button
-                onClick={() => setShowPickerTable(!showPickerTable)}
+                onClick={() => setDayPopupOpen(true)}
                 style={{
+                  background: "#1f2937",
                   padding: "6px 10px",
                   borderRadius: 8,
-                  border: "1px solid #1f2937",
-                  background: "#0b1220",
+                  border: "none",
                   color: "#e5e7eb",
+                  cursor: "pointer",
                 }}
               >
-                {selectedDate.toLocaleDateString("en-GB")} ▾
+                📅 Select Day
               </button>
-              {showPickerTable && (
-                <CalendarPopup
-                  selectedDate={selectedDate}
-                  onSelect={(date) => {
-                    setSelectedDate(date);
-                    setShowPickerTable(false);
-                  }}
-                />
-              )}
             </div>
           </div>
 
-          {/* 테이블 */}
-          <div>
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "1fr 1fr 1fr 120px",
-                padding: "12px 16px",
-                borderBottom: "1px solid #1f2937",
-                color: "#9ca3af",
-                fontSize: 12,
-                textTransform: "uppercase",
-                letterSpacing: 0.3,
-              }}
-            >
-              <div>Attack type</div>
-              <div>IP</div>
-              <div>Date - Time</div>
-              <div style={{ textAlign: "right" }}>Status code</div>
-            </div>
-
-            {filteredAttacks.length > 0 ? (
-              filteredAttacks.map((atk, i) => (
-                <div
-                  key={i}
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "1fr 1fr 1fr 120px",
-                    padding: "16px",
-                    borderBottom: "1px solid #111827",
-                    alignItems: "center",
-                  }}
-                >
-                  <div>{atk.type}</div>
-                  <div>{atk.ip}</div>
-                  <div>{new Date(atk.timestamp).toLocaleString()}</div>
-                  <div style={{ textAlign: "right" }}>
-                    <span
-                      style={{
-                        background: atk.status === 404 ? "#ef4444" : "#22c55e",
-                        color: "#0f172a",
-                        padding: "6px 14px",
-                        borderRadius: 999,
-                        fontWeight: 800,
-                      }}
-                    >
-                      {atk.status}
-                    </span>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div
+          <div
+            style={{
+              maxHeight: 320,
+              overflowY: "auto",
+              fontSize: 14,
+              borderTop: "1px solid #1f2937",
+            }}
+          >
+            {filteredDetails.length > 0 ? (
+              <table
                 style={{
-                  padding: 20,
-                  textAlign: "center",
-                  color: "#9ca3af",
+                  width: "100%",
+                  borderCollapse: "collapse",
+                  textAlign: "left",
                 }}
               >
-                No attacks found for selected date.
+                <thead style={{ background: "#111827" }}>
+                  <tr>
+                    <th style={{ padding: "10px 12px", fontSize: 13 }}>
+                      Time
+                    </th>
+                    <th style={{ padding: "10px 12px", fontSize: 13 }}>
+                      Type
+                    </th>
+                    <th style={{ padding: "10px 12px", fontSize: 13 }}>
+                      Source IP
+                    </th>
+                    <th style={{ padding: "10px 12px", fontSize: 13 }}>
+                      Destination IP
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredDetails.map((atk, i) => (
+                    <tr
+                      key={i}
+                      style={{
+                        borderBottom: "1px solid #1f2937",
+                        transition: "background 0.2s",
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.background = "#1e293b")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.background = "transparent")
+                      }
+                    >
+                      <td style={{ padding: "8px 12px" }}>
+                        {new Date(atk.end_time).toLocaleTimeString()}
+                      </td>
+                      <td style={{ padding: "8px 12px" }}>
+                        <span
+                          style={{
+                            background: "#2563eb22",
+                            padding: "2px 8px",
+                            borderRadius: 12,
+                            fontSize: 12,
+                            color: "#60a5fa",
+                          }}
+                        >
+                          {atk.attack_type ?? atk.type ?? "Unknown"}
+                        </span>
+                      </td>
+                      <td style={{ padding: "8px 12px", color: "#f87171" }}>
+                        {atk.src_ip}
+                      </td>
+                      <td style={{ padding: "8px 12px", color: "#34d399" }}>
+                        {atk.dst_ip}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <div style={{ padding: 12, color: "#9ca3af" }}>
+                No attacks for selected day
               </div>
             )}
           </div>
         </Card>
       </main>
+
+      {/* Month Popup */}
+      <Popup
+        visible={monthPopupOpen}
+        onClose={() => setMonthPopupOpen(false)}
+      >
+        <h3 style={{ marginBottom: 12 }}>Select Year / Month</h3>
+        <YearPicker value={insightYear} onChange={(y) => setInsightYear(y)} />
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            marginTop: 12,
+          }}
+        >
+          {[
+            "Jan",
+            "Feb",
+            "Mar",
+            "Apr",
+            "May",
+            "Jun",
+            "Jul",
+            "Aug",
+            "Sep",
+            "Oct",
+            "Nov",
+            "Dec",
+          ].map((m, i) => (
+            <button
+              key={i}
+              onClick={() => {
+                setInsightMonth(i);
+                setMonthPopupOpen(false);
+              }}
+              style={{
+                flex: "1 0 20%",
+                padding: "6px 10px",
+                borderRadius: 8,
+                border: "1px solid #1f2937",
+                background:
+                  insightMonth === i ? "#2563eb" : "rgba(255,255,255,0.04)",
+                color: insightMonth === i ? "#fff" : "#e5e7eb",
+                cursor: "pointer",
+              }}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+      </Popup>
+
+      {/* Day Popup */}
+      <Popup visible={dayPopupOpen} onClose={() => setDayPopupOpen(false)}>
+        <h3 style={{ marginBottom: 12 }}>Select Date</h3>
+        <YearPicker value={detailYear} onChange={(y) => setDetailYear(y)} />
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            alignItems: "center",
+            marginTop: 12,
+          }}
+        >
+          <button
+            onClick={() =>
+              setDetailMonth((prev) => (prev > 0 ? prev - 1 : 11))
+            }
+            style={{
+              padding: "4px 8px",
+              borderRadius: 6,
+              background: "#1f2937",
+              border: "none",
+              color: "#e5e7eb",
+              cursor: "pointer",
+            }}
+          >
+            ◀
+          </button>
+          <div style={{ flex: 1, textAlign: "center", fontSize: 14 }}>
+            {detailYear} - {detailMonth + 1}
+          </div>
+          <button
+            onClick={() =>
+              setDetailMonth((prev) => (prev < 11 ? prev + 1 : 0))
+            }
+            style={{
+              padding: "4px 8px",
+              borderRadius: 6,
+              background: "#1f2937",
+              border: "none",
+              color: "#e5e7eb",
+              cursor: "pointer",
+            }}
+          >
+            ▶
+          </button>
+        </div>
+        <div style={{ marginTop: 12 }}>
+          <MiniCalendar
+            year={detailYear}
+            month={detailMonth}
+            selected={detailSelectedDate}
+            onSelect={(d) => {
+              setDetailSelectedDate(d);
+              setDayPopupOpen(false);
+            }}
+          />
+        </div>
+      </Popup>
     </div>
   );
 };
