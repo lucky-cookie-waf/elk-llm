@@ -1,33 +1,67 @@
 import express from 'express';
-import { OpenAI } from 'openai';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import dotenv from 'dotenv';
+import { spawn } from 'child_process';
+import path from 'path';
 
 dotenv.config();
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3002;
 
-// OpenAI 클라이언트 초기화
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY
-});
-
-// 미들웨어 설정
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15분
   max: 100 // 요청 제한
 });
 app.use('/api/', limiter);
 
-// 세션 포맷팅 함수 (Python 코드 포팅)
+// 로컬 Mistral 모델로 분류하는 함수
+const classifyWithMistral = async (sessionText) => {
+  return new Promise((resolve, reject) => {
+    const python = spawn('python3', [
+      path.join(process.cwd(), 'model_inference.py'),
+      sessionText
+    ]);
+    
+    let result = '';
+    let error = '';
+    
+    python.stdout.on('data', (data) => {
+      result += data.toString();
+    });
+    
+    python.stderr.on('data', (data) => {
+      error += data.toString();
+    });
+    
+    python.on('close', (code) => {
+      if (code === 0) {
+        try {
+          const parsedResult = JSON.parse(result.trim());
+          resolve(parsedResult);
+        } catch (e) {
+          reject(new Error(`JSON 파싱 실패: ${result}`));
+        }
+      } else {
+        reject(new Error(`Python 프로세스 오류 (코드 ${code}): ${error}`));
+      }
+    });
+    
+    // 타임아웃 설정 (30초)
+    setTimeout(() => {
+      python.kill();
+      reject(new Error('모델 추론 타임아웃'));
+    }, 30000);
+  });
+};
+
+// 세션 포맷팅 함수 (기존과 동일)
 const formatSessionForAI = (session) => {
   let sessionText = "WAF 세션 분석:\n";
   
@@ -55,50 +89,16 @@ const formatSessionForAI = (session) => {
   return sessionText;
 };
 
-// 분류 결과 파싱 함수
-const parseClassification = (response) => {
-  const pred = response.trim().toUpperCase();
-  
-  if (pred.includes('SQL')) {
-    return 'SQL Injection';
-  } else if (pred.includes('CODE')) {
-    return 'Code Injection';
-  } else if (pred.includes('PATH') || pred.includes('TRAVERSAL')) {
-    return 'Path Traversal';
-  } else {
-    return 'Normal';
-  }
-};
-
-// 세션 분류 함수
+// 세션 분류 함수 (Mistral 모델 사용)
 const classifySession = async (session) => {
   try {
     const sessionText = formatSessionForAI(session);
+    console.log('분류 요청:', sessionText.substring(0, 200) + '...');
     
-    const response = await openai.chat.completions.create({
-      model: process.env.FINE_TUNED_MODEL_ID || 'ft:gpt-3.5-turbo-0125:ecops::BynTqL1m',
-      messages: [
-        {
-          role: "system", 
-          content: "WAF 분석가입니다. Normal, SQL Injection, Code Injection, Path Traversal 중 하나로 분류하세요."
-        },
-        {
-          role: "user", 
-          content: sessionText
-        }
-      ],
-      max_tokens: 20,
-      temperature: 0.1
-    });
-
-    const classification = parseClassification(response.choices[0].message.content);
+    const result = await classifyWithMistral(sessionText);
     
-    return {
-      success: true,
-      classification,
-      confidence: response.choices[0].finish_reason === 'stop' ? 'high' : 'low',
-      raw_response: response.choices[0].message.content
-    };
+    console.log('분류 결과:', result);
+    return result;
     
   } catch (error) {
     console.error('Classification error:', error);
@@ -146,13 +146,13 @@ app.post('/api/classify/batch', async (req, res) => {
     
     const results = [];
     
-    // 순차 처리 (API 제한 고려)
+    // 순차 처리
     for (const session of sessions) {
       const result = await classifySession(session);
       results.push(result);
       
-      // API 제한 방지를 위한 딜레이
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // 모델 처리 간격 (리소스 관리)
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
     
     res.json({ results });
@@ -168,7 +168,11 @@ app.post('/api/classify/batch', async (req, res) => {
 
 // 헬스체크
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'ai-classifier' });
+  res.json({ 
+    status: 'ok', 
+    service: 'ai-classifier-mistral',
+    model: 'huggingface-mistral-7b'
+  });
 });
 
 // 모델 테스트
@@ -177,7 +181,7 @@ app.get('/api/test', async (req, res) => {
     const testSession = [
       {
         request_http_method: 'GET',
-        request_http_request: '/test',
+        request_http_request: "/admin/config.php?id=1' UNION SELECT password FROM users--",
         user_agent: 'Mozilla/5.0'
       }
     ];
@@ -192,5 +196,5 @@ app.get('/api/test', async (req, res) => {
 
 app.listen(port, () => {
   console.log(`AI Classifier service running on port ${port}`);
-  console.log(`Fine-tuned model: ${process.env.FINE_TUNED_MODEL_ID}`);
+  console.log(`Using Hugging Face Mistral model`);
 });
