@@ -1,21 +1,34 @@
 FROM node:18-alpine
-
 WORKDIR /app
 
-# 패키지 파일 복사 및 의존성 설치
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    python3-dev \
+    gcc \
+    g++ \
+    musl-dev \
+    linux-headers
+
+RUN ln -sf python3 /usr/bin/python
+
+COPY requirements.txt ./
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+COPY model_inference.py ./
+
 COPY package*.json ./
 RUN npm install --omit=dev
 
-# 소스 코드 복사
 COPY . .
 
-# 포트 노출
 EXPOSE 3002
 
-# 사용자 생성 (보안)
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nodejs -u 1001
+
+RUN chown -R nodejs:nodejs /app
+
 USER nodejs
 
-# 서비스 실행
 CMD ["npm", "start"]
