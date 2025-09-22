@@ -11,10 +11,12 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 3002;
 
+// 미들웨어 설정
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+// Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15분
   max: 100 // 요청 제한
@@ -24,7 +26,7 @@ app.use('/api/', limiter);
 // 로컬 Mistral 모델로 분류하는 함수
 const classifyWithMistral = async (sessionText) => {
   return new Promise((resolve, reject) => {
-    const python = spawn('python3', [
+    const python = spawn('/app/venv/bin/python', [
       path.join(process.cwd(), 'model_inference.py'),
       sessionText
     ]);
