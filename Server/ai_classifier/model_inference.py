@@ -4,6 +4,7 @@ import json
 import os
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from peft import PeftModel
 from huggingface_hub import login
 import warnings
 
@@ -13,6 +14,7 @@ warnings.filterwarnings("ignore")
 class MistralClassifier:
     def __init__(self, model_path="snowhodut/waf-mistral-model"):
         self.model_path = model_path
+        self.base_model_name = "mistralai/Mistral-7B-Instruct-v0.3"
         self.model = None
         self.tokenizer = None
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -23,14 +25,19 @@ class MistralClassifier:
             login(token=hf_token)
 
     def load_model(self):
+        """LoRA 어댑터 모델과 토크나이저 로드"""
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(self.model_path)
-            self.model = AutoModelForCausalLM.from_pretrained(
-                self.model_path,
-                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32,
+            # 베이스 모델과 토크나이저 로드
+            self.tokenizer = AutoTokenizer.from_pretrained(self.base_model_name)
+            base_model = AutoModelForCausalLM.from_pretrained(
+                self.base_model_name,
+                dtype=torch.float16 if self.device == "cuda" else torch.float32,
                 device_map="auto" if self.device == "cuda" else None,
                 low_cpu_mem_usage=True,
             )
+
+            # LoRA 어댑터 로드
+            self.model = PeftModel.from_pretrained(base_model, self.model_path)
 
             if self.device == "cpu":
                 self.model = self.model.to(self.device)
@@ -41,6 +48,7 @@ class MistralClassifier:
             return False
 
     def predict(self, session_text):
+        """세션 텍스트 분류"""
         try:
             # 프롬프트 구성 (학습 시와 동일한 형식)
             prompt = f"""다음 웹 요청 로그를 분석하고, 공격 유형을 'Normal', 'Code Injection', 'Path Traversal', 'SQL Injection' 중에서 하나로 분류하세요.
@@ -87,6 +95,7 @@ Label:"""
             return {"success": False, "classification": "Normal", "error": str(e)}
 
     def parse_classification(self, response):
+        """AI 응답에서 분류 결과 추출"""
         response = response.strip().upper()
 
         if "SQL" in response:
@@ -109,14 +118,12 @@ def main():
 
     session_text = sys.argv[1]
 
-    # 모델 초기화 및 로드
     classifier = MistralClassifier()
     if not classifier.load_model():
         sys.exit(1)
 
     result = classifier.predict(session_text)
 
-    # JSON 형태로 결과 출력
     print(json.dumps(result))
 
 
