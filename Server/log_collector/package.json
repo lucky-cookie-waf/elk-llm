@@ -20,7 +20,7 @@
   "author": "yourname",
   "license": "MIT",
   "dependencies": {
-    "@prisma/client": "5.22.0",
+    "@prisma/client": "^6.15.0",
     "axios": "^1.7.7",
     "dotenv": "^16.3.1",
     "fast-glob": "^3.3.1",
@@ -28,6 +28,6 @@
     "ua-parser-js": "^1.0.0"
   },
   "devDependencies": {
-    "prisma": "5.22.0"
+    "prisma": "^6.15.0"
   }
 }
