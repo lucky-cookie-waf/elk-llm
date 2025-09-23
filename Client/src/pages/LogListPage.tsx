@@ -1,14 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-/* ========== time helpers (non-ISO도 안전하게 파싱) ========== */
+/* ========== time helpers ========== */
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const parseLoose = (s: string) => {
   if (!s) return new Date(NaN);
-  // "YYYY-MM-DD hh:mm:ss" → "YYYY-MM-DDThh:mm:ss"
   const t = s.includes("T") ? s : s.replace(" ", "T");
-  const d = new Date(t);
-  return d;
+  return new Date(t);
 };
 const fmtParts = (isoLike: string) => {
   const d = parseLoose(isoLike);
@@ -17,8 +15,7 @@ const fmtParts = (isoLike: string) => {
   const DD = pad2(d.getDate());
   const HH = pad2(d.getHours());
   const mm = pad2(d.getMinutes());
-  const ss = pad2(d.getSeconds());
-  return { ymd: `${yy}/${MM}/${DD}`, hms: `${HH}:${mm}:${ss}` };
+  return { ymd: `${yy}/${MM}/${DD}`, hm: `${HH}:${mm}` };
 };
 const isLeapYear = (y: number) => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0;
 const daysInMonth = (y: number, m: number) =>
@@ -28,42 +25,30 @@ const stampLabel = (y: number, m: number, d: number, h: number, min: number) =>
 
 /* ========== types ========== */
 type Status = "Safe" | "Danger" | "Detecting";
-type OrderType = "latest" | "earliest" | "user-agent";
+type OrderType = "latest" | "earliest"; 
 type TimeKey = "y" | "m" | "d" | "h" | "min";
 
 type SessionRowFromAPI = {
-  id: number | string;
+  id: number | string;            
   session_id: string;
   ip_address: string | null;
   user_agent: string | null;
-  start_time: string; // e.g., "2025-07-31 03:38:12"
-  end_time: string;   // e.g., "2025-07-31 03:38:16"
+  start_time: string; 
+  end_time: string;   
   created_at?: string;
-  label?: string | null;           // e.g., "NORMAL"
-  classification?: string | null;  // optional alternative
+  label?: string | null;           
+  classification?: string | null;  
 };
 
 type LogItem = {
-  id: string;
+  id: string;          
   detection: Status;
   session_id: string;
   ip_address: string;
   user_agent: string;
-  start_time: string; // keep original string; our fmt handles non-ISO
+  start_time: string;  
   end_time: string;
 };
-
-/* ========== sample MOCK (Reset용) ========== */
-const MOCK: LogItem[] = Array.from({ length: 9 }).map((_, i) => ({
-  id: String(i + 1),
-  detection: (["Safe", "Danger", "Detecting"] as Status[])[i % 3],
-  session_id: `session-${i + 1}`,
-  ip_address: `172.26.0.${i + 1}`,
-  user_agent:
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/44.0.2403.130 Safari/537.36",
-  start_time: "2020-07-17 11:23:00",
-  end_time: "2020-07-17 12:23:34",
-}));
 
 /* ========== small UI atoms ========== */
 const Badge: React.FC<{ type: Status }> = ({ type }) => {
@@ -109,7 +94,6 @@ const ToolbarButton: React.FC<{
   >
     <span style={{ opacity: 0.8 }}>{label}</span>
     {value && <span style={{ fontWeight: 800 }}>{value}</span>}
-    <span style={{ marginLeft: 6, opacity: 0.5 }}>▾</span>
   </button>
 );
 
@@ -158,6 +142,8 @@ const Modal: React.FC<{
         onClick={(e) => e.stopPropagation()}
         style={{
           width,
+          maxWidth: "calc(100vw - 40px)",            
+          boxSizing: "border-box",
           background: "#0f172a",
           border: "1px solid #1f2937",
           borderRadius: 16,
@@ -249,13 +235,20 @@ function mapRow(item: SessionRowFromAPI): LogItem {
 
 /* ========== Page ========== */
 export default function LogListPage() {
+  /* 초기 상태 */
+  const initialOrder: OrderType = "latest";
+  const initialStatuses = new Set<Status>();
+  const initialQuery = "";
+  const now = new Date();
+  const initialTime: { y: number; m: number; d: number; h: number; min: number } | null = null;
+
   /* 데이터 로드 */
   const [rows, setRows] = useState<LogItem[]>([]);
   const [connected, setConnected] = useState<null | boolean>(null);
 
-  useEffect(() => {
+  // 공통 fetch 함수: /api 실패 시 / 로 재시도
+  const fetchSessions = async () => {
     const qs = "label=NORMAL&page=1&pageSize=100&sort=end_time&order=desc";
-
     const tryFetch = async (url: string) => {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
@@ -267,36 +260,35 @@ export default function LogListPage() {
         : [];
       return arr.map(mapRow);
     };
-
-    (async () => {
-      try {
-        let list = await tryFetch(`/api/session?${qs}`);
-        if (!list.length) {
-          // 백엔드에 /api prefix가 없을 수도 있으니 재시도
-          list = await tryFetch(`/session?${qs}`);
-        }
-        setRows(list);
-        setConnected(true);
-      } catch (e) {
-        console.error("Failed to fetch sessions:", e);
-        setRows([]);
-        setConnected(false);
+    try {
+      let list = await tryFetch(`/api/session?${qs}`);
+      if (!list.length) {
+        list = await tryFetch(`/session?${qs}`);
       }
-    })();
+      setRows(list);
+      setConnected(true);
+    } catch (e) {
+      console.error("Failed to fetch sessions:", e);
+      setRows([]);
+      setConnected(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchSessions();
   }, []);
 
   /* 검색 */
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery);
 
   /* 정렬/상태 필터 */
-  const [orderApplied, setOrderApplied] = useState<OrderType>("latest");
-  const [statusApplied, setStatusApplied] = useState<Set<Status>>(new Set());
+  const [orderApplied, setOrderApplied] = useState<OrderType>(initialOrder);
+  const [statusApplied, setStatusApplied] = useState<Set<Status>>(new Set(initialStatuses));
 
   // 라벨
   const orderLabel = useMemo(() => {
     if (orderApplied === "latest") return "Latest";
-    if (orderApplied === "earliest") return "Earliest";
-    return "User-Agent";
+    return "Earliest";
   }, [orderApplied]);
 
   const statusLabel = useMemo(() => {
@@ -304,11 +296,7 @@ export default function LogListPage() {
     return Array.from(statusApplied).join(", ");
   }, [statusApplied]);
 
-  /* 모달: Order */
-  const [orderOpen, setOrderOpen] = useState(false);
-  const [orderTemp, setOrderTemp] = useState<OrderType>("latest");
-
-  /* 모달: Status */
+  /* 모달: Status (유지) */
   const [statusOpen, setStatusOpen] = useState(false);
   const [statusTemp, setStatusTemp] = useState<Set<Status>>(new Set());
   const toggleStatus = (s: Status) =>
@@ -319,8 +307,7 @@ export default function LogListPage() {
       return next;
     });
 
-  /* Time 필터 */
-  const now = new Date();
+  /* Time 필터 (분까지만) */
   const [timeOpen, setTimeOpen] = useState(false);
   const [timeTemp, setTimeTemp] = useState({
     y: now.getFullYear(),
@@ -330,7 +317,7 @@ export default function LogListPage() {
     min: now.getMinutes(),
   });
   const [timeApplied, setTimeApplied] =
-    useState<{ y: number; m: number; d: number; h: number; min: number } | null>(null);
+    useState<{ y: number; m: number; d: number; h: number; min: number } | null>(initialTime);
 
   const bump = (key: TimeKey, dir: 1 | -1) =>
     setTimeTemp((p) => {
@@ -351,13 +338,16 @@ export default function LogListPage() {
     [timeApplied]
   );
 
-  // user-agent 팝업
-  const [uaPop, setUaPop] = useState<{ open: boolean; rect?: DOMRect; text?: string }>({
-    open: false,
-  });
+  // 팝업: UA & session_id 전체보기
+  const [uaPop, setUaPop] = useState<{ open: boolean; rect?: DOMRect; text?: string }>({ open: false });
+  const [sidPop, setSidPop] = useState<{ open: boolean; rect?: DOMRect; text?: string }>({ open: false });
   const onUAClick = (e: React.MouseEvent<HTMLDivElement>, text: string) => {
     const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
     setUaPop({ open: true, rect, text });
+  };
+  const onSIDClick = (e: React.MouseEvent<HTMLDivElement>, text: string) => {
+    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+    setSidPop({ open: true, rect, text });
   };
 
   /* 화면 표시용 리스트 정렬/필터/검색 */
@@ -378,7 +368,7 @@ export default function LogListPage() {
       );
     }
 
-    // (선택) 시간 필터 – end_time이 선택 시간 이후인 것만
+    // 시간 필터 – end_time이 선택 시간 이후인 것만
     if (timeApplied) {
       const t = new Date(
         timeApplied.y,
@@ -390,17 +380,16 @@ export default function LogListPage() {
       a = a.filter((r) => parseLoose(r.end_time).getTime() >= t);
     }
 
-    // 정렬
-    if (orderApplied === "user-agent")
-      a.sort((x, y) => (x.user_agent || "").localeCompare(y.user_agent || ""));
-    else if (orderApplied === "earliest")
+    // 정렬 
+    if (orderApplied === "earliest")
       a.sort((x, y) => (parseLoose(x.start_time) > parseLoose(y.start_time) ? 1 : -1));
-    else a.sort((x, y) => (parseLoose(x.end_time) < parseLoose(y.end_time) ? 1 : -1)); // latest
+    else
+      a.sort((x, y) => (parseLoose(x.end_time) < parseLoose(y.end_time) ? 1 : -1)); // latest
 
     return a;
   }, [rows, statusApplied, orderApplied, q, timeApplied]);
 
-  /* Time 필드 정의 (키 리터럴 고정) */
+  /* Time 필드 정의 */
   const timeDefs: ReadonlyArray<{ key: TimeKey; label: string }> = [
     { key: "y", label: "Year" },
     { key: "m", label: "Month" },
@@ -408,6 +397,20 @@ export default function LogListPage() {
     { key: "h", label: "Hour" },
     { key: "min", label: "Minute" },
   ] as const;
+
+  /* Order Type 토글 */
+  const toggleOrder = () => {
+    setOrderApplied((p) => (p === "latest" ? "earliest" : "latest"));
+  };
+
+  /* Reset: 초기 필터로 복귀, 서버에서 다시 불러오기 */
+  const onReset = async () => {
+    setOrderApplied(initialOrder);
+    setStatusApplied(new Set(initialStatuses));
+    setQ(initialQuery);
+    setTimeApplied(initialTime);
+    await fetchSessions();
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -488,14 +491,14 @@ export default function LogListPage() {
         }}
       >
         <ToolbarButton label="Time" value={timeLabel} onClick={() => setTimeOpen(true)} />
+
+        {/*  Order Type  */}
         <ToolbarButton
           label="Order Type"
           value={orderLabel}
-          onClick={() => {
-            setOrderTemp(orderApplied);
-            setOrderOpen(true);
-          }}
+          onClick={toggleOrder}
         />
+
         <ToolbarButton
           label="Order Status"
           value={statusLabel}
@@ -506,13 +509,7 @@ export default function LogListPage() {
         />
         <div style={{ flex: 1 }} />
         <button
-          onClick={() => {
-            setRows(MOCK);
-            setOrderApplied("latest");
-            setStatusApplied(new Set());
-            setQ("");
-            setTimeApplied(null);
-          }}
+          onClick={onReset}
           style={{
             padding: "10px 14px",
             borderRadius: 10,
@@ -531,22 +528,28 @@ export default function LogListPage() {
       <style>{`
         .grid-head, .grid-row {
           display: grid;
-          grid-template-columns: 140px 200px 160px minmax(320px, 1fr) 160px 160px;
+          grid-template-columns: 80px 220px 160px minmax(320px, 1fr) 160px 160px 160px;
+          /*  id | session_id | ip | user_agent | end_time | start_time  (기존 6열 + id 추가) */
           column-gap: 12px;
           align-items: center;
         }
         @media (max-width: 1280px) {
           .grid-head, .grid-row {
-            grid-template-columns: 120px 180px 150px minmax(240px, 1fr) 140px 140px;
+            grid-template-columns: 70px 200px 150px minmax(240px, 1fr) 140px 140px 140px;
           }
         }
-        .ua-cell {
+        .ua-cell, .sid-cell {
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
           cursor: pointer;
         }
         .time-cell { white-space: nowrap; }
+        .id-link {
+          color: #3b82f6;
+          text-decoration: underline;
+          white-space: nowrap;
+        }
       `}</style>
 
       <div
@@ -568,12 +571,13 @@ export default function LogListPage() {
             textTransform: "uppercase",
           }}
         >
-          <div>Label</div>
+          <div>id</div>
           <div>session_id</div>
           <div>ip_address</div>
           <div>user_agent</div>
           <div>end_time</div>
           <div>start_time</div>
+          <div>Label</div>
         </div>
 
         {list.map((row) => {
@@ -581,30 +585,36 @@ export default function LogListPage() {
           const end = fmtParts(row.end_time);
           return (
             <div
-              key={row.id}
+              key={`${row.id}-${row.session_id}`}
               className="grid-row"
               style={{ padding: "14px 16px", borderBottom: "1px solid #111827" }}
             >
+              {/* RawLog 링크 (세션 상세로 이동) */}
               <div>
-                <Badge type={row.detection} />
+                <Link
+                className="id-link"
+                to={`/rawlog/${encodeURIComponent(row.id)}`}   
+                title="See RawLog"
+                state={{ session_id: row.session_id, session_db_id: Number(row.id) }}         
+                >
+                  {row.id}
+                </Link>
+
               </div>
 
-              {/* session_id를 RawLog로 이동하는 링크로 변경 */}
-              <Link
-                to={`/rawlog/${encodeURIComponent(row.session_id)}`}
-                style={{
-                  whiteSpace: "nowrap",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  color: "#3b82f6",
-                  textDecoration: "underline",
-                  cursor: "pointer",
-                }}
+              {/* session_id */}
+              <div
+                className="sid-cell"
+                onClick={(e) => onSIDClick(e, row.session_id)}
+                title="Click to view full session_id"
+                style={{ color: "#e5e7eb" }}
               >
                 {row.session_id}
-              </Link>
+              </div>
 
               <div style={{ whiteSpace: "nowrap" }}>{row.ip_address}</div>
+
+              {/* user_agent */}
               <div
                 className="ua-cell"
                 onClick={(e) => onUAClick(e, row.user_agent)}
@@ -612,30 +622,38 @@ export default function LogListPage() {
               >
                 {row.user_agent}
               </div>
-              <div className="time-cell" title={`${end.ymd}-${end.hms}`}>
-                {end.ymd}-{end.hms}
+
+              <div className="time-cell" title={`${end.ymd}-${end.hm}`}>
+                {end.ymd}-{end.hm}
               </div>
-              <div className="time-cell" title={`${start.ymd}-${start.hms}`}>
-                {start.ymd}-{start.hms}
+              <div className="time-cell" title={`${start.ymd}-${start.hm}`}>
+                {start.ymd}-{start.hm}
+              </div>
+
+              <div>
+                <Badge type={row.detection} />
               </div>
             </div>
           );
         })}
-      </div> {/* ⬅️ 이 닫힘이 누락돼서 오류가 났었습니다. */}
+      </div>
 
-      {/* UA 전체보기 팝업 */}
+      {/* 팝업들 */}
       <Pop open={uaPop.open} anchor={uaPop.rect} onClose={() => setUaPop({ open: false })}>
         <div style={{ fontSize: 12, lineHeight: 1.5, wordBreak: "break-all" }}>{uaPop.text}</div>
       </Pop>
+      <Pop open={sidPop.open} anchor={sidPop.rect} onClose={() => setSidPop({ open: false })}>
+        <div style={{ fontSize: 12, lineHeight: 1.5, wordBreak: "break-all" }}>{sidPop.text}</div>
+      </Pop>
 
       {/* Time Modal */}
-      <Modal open={timeOpen} onClose={() => setTimeOpen(false)} width={620}>
+      <Modal open={timeOpen} onClose={() => setTimeOpen(false)} width={760}>
         <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 10 }}>Time Filter</h3>
         <div
           style={{
             display: "grid",
-            gridTemplateColumns: "repeat(5, 1fr)",
-            gap: 12,
+            gridTemplateColumns: "repeat(5, minmax(120px, 1fr))",
+            gap: 10,
             marginBottom: 16,
           }}
         >
@@ -651,6 +669,7 @@ export default function LogListPage() {
               <div style={{ padding: "8px 12px", fontSize: 12, opacity: 0.8 }}>
                 {f.label}
               </div>
+
               <div
                 style={{
                   display: "grid",
@@ -667,6 +686,7 @@ export default function LogListPage() {
                     gap: 8,
                   }}
                 >
+                  
                   <button
                     onClick={() => bump(f.key, -1)}
                     style={{
@@ -726,44 +746,6 @@ export default function LogListPage() {
             }}
           >
             Clear
-          </Pill>
-        </div>
-      </Modal>
-
-      {/* Order Modal */}
-      <Modal open={orderOpen} onClose={() => setOrderOpen(false)} width={600}>
-        <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 14 }}>
-          Select Order Type
-        </h3>
-        <div style={{ display: "flex", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
-          <Pill
-            active={orderTemp === "latest"}
-            onClick={() => setOrderTemp("latest")}
-          >
-            Latest
-          </Pill>
-          <Pill
-            active={orderTemp === "earliest"}
-            onClick={() => setOrderTemp("earliest")}
-          >
-            Earliest
-          </Pill>
-          <Pill
-            active={orderTemp === "user-agent"}
-            onClick={() => setOrderTemp("user-agent")}
-          >
-            User-Agent
-          </Pill>
-        </div>
-        <div style={{ display: "flex", justifyContent: "center" }}>
-          <Pill
-            active
-            onClick={() => {
-              setOrderApplied(orderTemp);
-              setOrderOpen(false);
-            }}
-          >
-            Apply Now
           </Pill>
         </div>
       </Modal>
