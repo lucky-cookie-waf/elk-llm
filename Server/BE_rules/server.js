@@ -2,13 +2,10 @@ const express = require('express');
 const morgan = require('morgan');
 require('dotenv').config();
 
-<<<<<<< HEAD
 const app = express();
-=======
 app.use(express.json());
 app.use(require('./routes/rules'));  // ← ./routes/rules.js
 app.use(require('./routes/dashboard')); // 대시보드 API 추가
->>>>>>> 4a0e4bf710111c7bee0813d8f8e53295f3d00d5e
 
 app.use(express.json({ limit: '2mb' }));
 app.use(morgan('dev'));

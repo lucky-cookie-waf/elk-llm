@@ -307,7 +307,7 @@ export default function LogListPage() {
       return next;
     });
 
-  /* Time 필터 (분까지만) */
+  /* Time 필터 */
   const [timeOpen, setTimeOpen] = useState(false);
   const [timeTemp, setTimeTemp] = useState({
     y: now.getFullYear(),
