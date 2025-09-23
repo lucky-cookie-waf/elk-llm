@@ -11,7 +11,7 @@ module.exports = function (app) {
   );
 
   app.use(
-    ['/rules', '/session'],
+    ['/rules', '/session', '/rawlog', '/healthz'],
     createProxyMiddleware({
       target: 'http://localhost:3001',
       changeOrigin: true,
