@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 
+/* time helper */
 const pad2 = (n: number) => String(n).padStart(2, "0");
 const fmtParts = (isoLike?: string) => {
   if (!isoLike) return "-";
@@ -15,6 +16,7 @@ const fmtParts = (isoLike?: string) => {
   return `${yy}/${MM}/${DD} ${HH}:${mm}`;
 };
 
+/* 타입 */
 type RawLogRow = {
   id: number | string;
   transaction_id: string | null;
@@ -50,11 +52,11 @@ export default function RawLogPage() {
     const run = async () => {
       try {
         setConnected(null);
-        const res = await fetch(`/api/rawlog?sessionId=${encodeURIComponent(String(numericId))}`);
+        const res = await fetch(`/api/session/${encodeURIComponent(String(numericId))}?limit=500&order=asc`);
         const text = await res.text();
         if (!res.ok) throw new Error(`${res.status} ${res.statusText} :: ${text}`);
         const json = JSON.parse(text);
-        const data: RawLogRow[] = Array.isArray(json?.data) ? json.data : [];
+        const data: RawLogRow[] = Array.isArray(json?.rawLogs?.items) ? json.rawLogs.items : [];
         setRows(data);
         setConnected(true);
       } catch (e: any) {
@@ -69,8 +71,9 @@ export default function RawLogPage() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+      {/* 상단 바 */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 0" }}>
-        <Link to="/loglist" style={{ color: "#3b82f6", fontSize: 14, textDecoration: "underline" }}>
+        <Link to="/loglists" style={{ color: "#3b82f6", fontSize: 14, textDecoration: "underline" }}>
           ← Back to Session List
         </Link>
         <span
@@ -94,6 +97,7 @@ export default function RawLogPage() {
         </pre>
       )}
 
+      {/* 테이블 */}
       <div style={{ background: "#0b1220", border: "1px solid #1f2937", borderRadius: 12, overflowX: "auto" }}>
         <div
           style={{
@@ -129,7 +133,7 @@ export default function RawLogPage() {
             <div>{row.remote_port ?? "-"}</div>
             <div>{row.local_host ?? "-"}</div>
             <div>{row.local_port ?? "-"}</div>
-            <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={row.matched_rules ?? ""}>
+            <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={String(row.matched_rules ?? "")}>
               {row.matched_rules ?? "-"}
             </div>
             <div style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }} title={row.full_log ?? ""}>
