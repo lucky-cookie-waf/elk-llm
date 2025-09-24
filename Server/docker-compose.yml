@@ -164,7 +164,12 @@ services:
       - ./.env.shared
       - ./ai_classifier/.env
     environment:
-      NODE_OPTIONS: "--dns-result-order=ipv4first"
+      - NODE_OPTIONS="--dns-result-order=ipv4first"
+      - HF_HOME=/tmp/hf
+      - HUGGINGFACE_HUB_CACHE=/tmp/hf
+      - TRANSFORMERS_CACHE=/tmp/hf
+      - HOME=/tmp
+
     dns: ["1.1.1.1", "8.8.8.8"]
     networks:
       - web-network
