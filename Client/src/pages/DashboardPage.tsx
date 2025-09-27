@@ -1,4 +1,28 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
+
+// package.json의 "proxy" 설정이 API 호출을 담당합니다.
+
+/* -------------------- API 데이터 타입 정의 -------------------- */
+interface OverviewStats {
+  totalAttacks: number;
+  wowChangePct: number;
+  period: { from: string; to: string };
+}
+
+interface TrendPoint {
+  ts: string;
+  count: number;
+}
+
+interface AttackDetail {
+  sessionId: number;
+  attackType: string;
+  ip: string;
+  userAgent: string;
+  statusCode: number | null;
+  time: string;
+  confidence: number;
+}
 
 /* -------------------- Card / Badge -------------------- */
 const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }> = ({
@@ -58,8 +82,8 @@ const LineChart: React.FC<{ width: number; height: number; data: number[] }> = (
 }) => {
   const max = Math.max(...data) || 1;
   const pad = 36;
-  const w = width - pad * 2;
-  const h = height - pad * 2;
+  const w = width > pad * 2 ? width - pad * 2 : 0;
+  const h = height > pad * 2 ? height - pad * 2 : 0;
   const stepX = data.length > 1 ? w / (data.length - 1) : 0;
 
   const points = data
@@ -76,9 +100,9 @@ const LineChart: React.FC<{ width: number; height: number; data: number[] }> = (
         <line
           key={idx}
           x1={pad}
-          y1={pad + g * h}
+          y1={pad + (1 - g) * h}
           x2={pad + w}
-          y2={pad + g * h}
+          y2={pad + (1 - g) * h}
           stroke="#1f2937"
         />
       ))}
@@ -151,7 +175,7 @@ const DonutChart: React.FC<{
             strokeWidth={thickness}
             strokeDasharray={`${dash} ${gap}`}
             strokeDashoffset={offset}
-            strokeLinecap="round"
+            strokeLinecap={"round" as any}
           />
         );
       })}
@@ -160,10 +184,11 @@ const DonutChart: React.FC<{
         y={cy}
         textAnchor="middle"
         dominantBaseline="middle"
-        fontSize={12}
+        fontSize={24}
+        fontWeight={800}
         fill="#e5e7eb"
       >
-        {total}
+        {total.toLocaleString()}
       </text>
     </svg>
   );
@@ -319,118 +344,169 @@ const MiniCalendar: React.FC<MiniCalendarProps> = ({
 const clampYear = (y: number) => Math.max(2020, Math.min(2025, y));
 
 const DashboardPage: React.FC = () => {
-  const [attacksData, setAttacksData] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+  // 공통 상태
   const [apiStatus, setApiStatus] = useState("Checking...");
 
+  // 상단 카드 상태
+  const [overviewStats, setOverviewStats] = useState<OverviewStats | null>(null);
+  const [latestAttack, setLatestAttack] = useState<string | null>(null);
+  
+  // Attack Insights (차트) 상태
+  const [trendData, setTrendData] = useState<TrendPoint[]>([]);
+  const [donutValues, setDonutValues] = useState<{ label: string; value: number; color: string }[]>([]);
+  const [isInsightLoading, setIsInsightLoading] = useState(true);
+  
+  // Attack Details (테이블) 상태
+  const [attackDetails, setAttackDetails] = useState<AttackDetail[]>([]);
+  const [isDetailsLoading, setIsDetailsLoading] = useState(true);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const tableContainerRef = useRef<HTMLDivElement>(null);
+
+  // 날짜 선택 상태
   const now = new Date();
   const [insightYear, setInsightYear] = useState(clampYear(now.getFullYear()));
-  const [insightMonth, setInsightMonth] = useState(now.getMonth());
+  const [insightMonth, setInsightMonth] = useState(now.getMonth()); // 0-11
   const [monthPopupOpen, setMonthPopupOpen] = useState(false);
 
   const [detailYear, setDetailYear] = useState(now.getFullYear());
   const [detailMonth, setDetailMonth] = useState(now.getMonth());
-  const [detailSelectedDate, setDetailSelectedDate] =
-    useState<Date | null>(now);
+  const [detailSelectedDate, setDetailSelectedDate] = useState<Date | null>(now);
   const [dayPopupOpen, setDayPopupOpen] = useState(false);
 
-  const API_BASE = process.env.REACT_APP_API_BASE || "";
+  // API 호출 헬퍼
+  const apiFetch = useCallback(async (endpoint: string) => {
+    try {
+      const res = await fetch(endpoint);
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status} on ${endpoint}`);
+      }
+      return await res.json();
+    } catch (err: any) {
+      console.error(`API Error on ${endpoint}:`, err);
+      setApiStatus(`API 연결 실패 ❌ (${err?.message ?? "Unknown"})`);
+      throw err;
+    }
+  }, []);
 
+  // 1. 초기 상단 카드 데이터 로드
   useEffect(() => {
-    let mounted = true;
-    const fetchData = async () => {
-      setLoading(true);
+    const fetchInitialStats = async () => {
       try {
-        const url = `${API_BASE}/session?label=MALICIOUS&page=1&pageSize=500&sort=end_time&order=desc`;
-        const res = await fetch(url);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const json = await res.json();
-        let items: any[] = [];
-        if (Array.isArray(json)) items = json;
-        else if (Array.isArray(json.data)) items = json.data;
-        else if (Array.isArray(json.items)) items = json.items;
-        else items = [];
-
-        if (mounted) {
-          setAttacksData(items);
-          setApiStatus("Connected ✅");
-        }
-      } catch (err: any) {
-        if (mounted) {
-          setApiStatus(
-            `API 연결 실패 ❌ (${err?.message ?? "Unknown"})`
-          );
-          setAttacksData([]);
-        }
-      } finally {
-        if (mounted) setLoading(false);
+        const [overview, recent] = await Promise.all([
+          apiFetch('/stats/overview'),
+          apiFetch('/stats/recent-attack')
+        ]);
+        setOverviewStats(overview);
+        setLatestAttack(recent.latestAt);
+        setApiStatus("Connected ✅");
+      } catch (err) {
+        // 에러 상태는 apiFetch 내부에서 처리
       }
     };
-    fetchData();
-    return () => {
-      mounted = false;
+    fetchInitialStats();
+  }, [apiFetch]);
+
+  // 2. Attack Insights (차트) 데이터 로드 (월 변경 시)
+  useEffect(() => {
+    const fetchInsightData = async () => {
+      setIsInsightLoading(true);
+      const from = new Date(insightYear, insightMonth, 1);
+      const to = new Date(insightYear, insightMonth + 1, 1);
+
+      try {
+        const trendUrl = `/attacks/trend?from=${from.toISOString()}&to=${to.toISOString()}&groupBy=day`;
+        const trendResult = await apiFetch(trendUrl);
+        setTrendData(trendResult.points || []);
+
+        const attacksUrl = `/attacks?year=${insightYear}&month=${insightMonth + 1}&limit=500`;
+        const attacksResult = await apiFetch(attacksUrl);
+        const items: AttackDetail[] = attacksResult.items || [];
+        
+        const typeCounts: Record<string, number> = {};
+        items.forEach((atk) => {
+          typeCounts[atk.attackType] = (typeCounts[atk.attackType] || 0) + 1;
+        });
+
+        const palette = ["#93c5fd", "#60a5fa", "#3b82f6", "#2563eb", "#1d4ed8", "#7c3aed", "#ec4899", "#f97316", "#f59e0b", "#10b981"];
+        const donutData = Object.entries(typeCounts)
+          .sort(([, a], [, b]) => b - a)
+          .map(([label, value], i) => ({
+              label,
+              value,
+              color: palette[i % palette.length],
+          }));
+        setDonutValues(donutData);
+
+      } catch (err) {
+        setTrendData([]);
+        setDonutValues([]);
+      } finally {
+        setIsInsightLoading(false);
+      }
     };
-  }, [API_BASE]);
+    fetchInsightData();
+  }, [insightYear, insightMonth, apiFetch]);
 
-  // daily counts for selected month
-  const daysInSelectedMonth = new Date(
-    insightYear,
-    insightMonth + 1,
-    0
-  ).getDate();
-  const dailyCounts = Array.from({ length: daysInSelectedMonth }, (_, d) =>
-    attacksData.filter((atk) => {
-      const t = new Date(atk.end_time);
-      return (
-        t.getFullYear() === insightYear &&
-        t.getMonth() === insightMonth &&
-        t.getDate() === d + 1
-      );
-    }).length
-  );
+  
+  // 3. Attack Details (테이블) 데이터 로드 (일 변경 시)
+  const fetchAttackDetails = useCallback(async (date: Date, cursor: string | null = null) => {
+    setIsDetailsLoading(true);
+    
+    const from = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const to = new Date(from.getTime() + 24 * 60 * 60 * 1000);
+    
+    let url = `/attacks?from=${from.toISOString()}&to=${to.toISOString()}&limit=20`;
+    if (cursor) {
+      url += `&cursor=${cursor}`;
+    }
 
-  // donut data
-  const filteredForInsightMonth = attacksData.filter((atk) => {
-    const t = new Date(atk.end_time);
-    return (
-      t.getFullYear() === insightYear && t.getMonth() === insightMonth
-    );
-  });
-  const typeCounts: Record<string, number> = {};
-  filteredForInsightMonth.forEach((atk) => {
-    const key = atk.attack_type ?? atk.type ?? atk.label ?? "Unknown";
-    typeCounts[key] = (typeCounts[key] || 0) + 1;
-  });
-  const palette = [
-    "#93c5fd",
-    "#60a5fa",
-    "#3b82f6",
-    "#2563eb",
-    "#1d4ed8",
-    "#7c3aed",
-    "#ec4899",
-    "#f97316",
-    "#f59e0b",
-    "#10b981",
-  ];
-  const donutValues = Object.entries(typeCounts).map(
-    ([label, value], i) => ({
-      label,
-      value,
-      color: palette[i % palette.length],
-    })
-  );
+    try {
+      const data = await apiFetch(url);
+      setAttackDetails(prev => cursor ? [...prev, ...(data.items || [])] : (data.items || []));
+      setNextCursor(data.nextCursor || null);
+    } catch (err) {
+      if (!cursor) setAttackDetails([]);
+    } finally {
+      setIsDetailsLoading(false);
+    }
+  }, [apiFetch]);
 
-  // details
-  const filteredDetails = attacksData.filter((atk) => {
-    if (!detailSelectedDate) return false;
-    const t = new Date(atk.end_time);
-    return (
-      t.getFullYear() === detailSelectedDate.getFullYear() &&
-      t.getMonth() === detailSelectedDate.getMonth() &&
-      t.getDate() === detailSelectedDate.getDate()
-    );
-  });
+  useEffect(() => {
+    if (detailSelectedDate) {
+      setAttackDetails([]);
+      setNextCursor(null);
+      fetchAttackDetails(detailSelectedDate);
+    }
+  }, [detailSelectedDate, fetchAttackDetails]);
+
+  // 무한 스크롤 핸들러
+  const handleScroll = useCallback(() => {
+    const container = tableContainerRef.current;
+    if (container && detailSelectedDate) {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      if (scrollHeight - scrollTop - clientHeight < 100 && !isDetailsLoading && nextCursor) {
+        fetchAttackDetails(detailSelectedDate, nextCursor);
+      }
+    }
+  }, [isDetailsLoading, nextCursor, detailSelectedDate, fetchAttackDetails]);
+
+  // 라인차트에 맞는 데이터 가공
+  const dailyCountsForChart = useMemo(() => {
+    const daysInMonth = new Date(insightYear, insightMonth + 1, 0).getDate();
+    const counts = Array(daysInMonth).fill(0);
+    if(trendData) {
+        trendData.forEach(p => {
+            const dayOfMonth = new Date(p.ts).getDate();
+            if (dayOfMonth > 0 && dayOfMonth <= daysInMonth) {
+                counts[dayOfMonth - 1] = p.count;
+            }
+        });
+    }
+    return counts;
+  }, [trendData, insightYear, insightMonth]);
+  
+  // 도넛 차트 범례를 위한 전체 합계 계산
+  const totalDonutValue = useMemo(() => donutValues.reduce((sum, item) => sum + item.value, 0) || 1, [donutValues]);
 
   return (
     <div
@@ -456,15 +532,16 @@ const DashboardPage: React.FC = () => {
             marginTop: 16,
           }}
         >
+          {/* [수정] 라벨 텍스트 변경 (백엔드 API 수정 필요) */}
           <StatBadge
             label="Total Attacks"
-            value={String(attacksData.length)}
+            value={overviewStats?.totalAttacks.toLocaleString() ?? '...'}
           />
           <StatBadge
             label="Recent Attack"
             value={
-              attacksData.length > 0
-                ? new Date(attacksData[0].end_time).toLocaleString()
+              latestAttack
+                ? new Date(latestAttack).toLocaleString()
                 : "N/A"
             }
           />
@@ -506,38 +583,46 @@ const DashboardPage: React.FC = () => {
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "66% 34%",
-              gap: 12,
+              // [수정] 차트 레이아웃 비율 고정값으로 조정
+              gridTemplateColumns: "60% 40%",
+              gap: 24,
+              alignItems: 'center'
             }}
           >
-            <Card style={{ padding: 0, height: 320 }}>
-              <LineChart width={760} height={320} data={dailyCounts} />
+            <Card style={{ padding: 0, height: 320, opacity: isInsightLoading ? 0.5 : 1 }}>
+              {/* [수정] 라인 차트 너비를 적절한 고정값으로 변경 */}
+              <LineChart width={680} height={320} data={dailyCountsForChart} />
             </Card>
+            
             <Card
               style={{
-                padding: 0,
+                padding: '16px',
                 display: "flex",
+                flexDirection: 'column',
                 alignItems: "center",
                 justifyContent: "center",
                 height: 320,
+                opacity: isInsightLoading ? 0.5 : 1,
               }}
             >
               {donutValues.length > 0 ? (
-                <div style={{ textAlign: "center" }}>
-                  <DonutChart size={260} values={donutValues} />
-                  <div
-                    style={{
-                      marginTop: 8,
-                      color: "#9ca3af",
-                      fontSize: 13,
-                    }}
-                  >
-                    Types in selected month
+                <>
+                  <DonutChart size={180} thickness={28} values={donutValues} />
+                  <div style={{ marginTop: 16, width: '100%', fontSize: 12, color: '#9ca3af', overflowY: 'auto', maxHeight: '100px' }}>
+                    {donutValues.map(item => (
+                      <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4, paddingRight: '8px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          <span style={{ width: 10, height: 10, borderRadius: '50%', backgroundColor: item.color, marginRight: 8, flexShrink: 0 }}></span>
+                          <span title={item.label}>{item.label}</span>
+                        </div>
+                        <strong style={{ flexShrink: 0, marginLeft: '8px' }}>{((item.value / totalDonutValue) * 100).toFixed(1)}%</strong>
+                      </div>
+                    ))}
                   </div>
-                </div>
+                </>
               ) : (
                 <div style={{ color: "#9ca3af" }}>
-                  No data for this month
+                  {isInsightLoading ? 'Loading...' : 'No data for this month'}
                 </div>
               )}
             </Card>
@@ -580,6 +665,8 @@ const DashboardPage: React.FC = () => {
           </div>
 
           <div
+            ref={tableContainerRef}
+            onScroll={handleScroll}
             style={{
               maxHeight: 320,
               overflowY: "auto",
@@ -587,34 +674,34 @@ const DashboardPage: React.FC = () => {
               borderTop: "1px solid #1f2937",
             }}
           >
-            {filteredDetails.length > 0 ? (
-              <table
-                style={{
-                  width: "100%",
-                  borderCollapse: "collapse",
-                  textAlign: "left",
-                }}
-              >
-                <thead style={{ background: "#111827" }}>
-                  <tr>
-                    <th style={{ padding: "10px 12px", fontSize: 13 }}>
-                      Time
-                    </th>
-                    <th style={{ padding: "10px 12px", fontSize: 13 }}>
-                      Type
-                    </th>
-                    <th style={{ padding: "10px 12px", fontSize: 13 }}>
-                      Source IP
-                    </th>
-                    <th style={{ padding: "10px 12px", fontSize: 13 }}>
-                      Destination IP
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredDetails.map((atk, i) => (
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                textAlign: "left",
+              }}
+            >
+              <thead style={{ background: "#111827", position: "sticky", top: 0 }}>
+                <tr>
+                  <th style={{ padding: "10px 12px", fontSize: 13, width: "25%" }}>
+                    Attack Type
+                  </th>
+                  <th style={{ padding: "10px 12px", fontSize: 13, width: "25%" }}>
+                    IP
+                  </th>
+                  <th style={{ padding: "10px 12px", fontSize: 13, width: "30%" }}>
+                    Date - Time
+                  </th>
+                  <th style={{ padding: "10px 12px", fontSize: 13, width: "20%" }}>
+                    Session ID
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {attackDetails.length > 0 ? (
+                  attackDetails.map((atk, i) => (
                     <tr
-                      key={i}
+                      key={`${atk.sessionId}-${i}`}
                       style={{
                         borderBottom: "1px solid #1f2937",
                         transition: "background 0.2s",
@@ -627,9 +714,6 @@ const DashboardPage: React.FC = () => {
                       }
                     >
                       <td style={{ padding: "8px 12px" }}>
-                        {new Date(atk.end_time).toLocaleTimeString()}
-                      </td>
-                      <td style={{ padding: "8px 12px" }}>
                         <span
                           style={{
                             background: "#2563eb22",
@@ -639,22 +723,32 @@ const DashboardPage: React.FC = () => {
                             color: "#60a5fa",
                           }}
                         >
-                          {atk.attack_type ?? atk.type ?? "Unknown"}
+                          {atk.attackType}
                         </span>
                       </td>
-                      <td style={{ padding: "8px 12px", color: "#f87171" }}>
-                        {atk.src_ip}
+                      <td style={{ padding: "8px 12px", fontFamily: 'monospace' }}>
+                        {atk.ip}
                       </td>
-                      <td style={{ padding: "8px 12px", color: "#34d399" }}>
-                        {atk.dst_ip}
+                       <td style={{ padding: "8px 12px" }}>
+                        {new Date(atk.time).toLocaleString()}
+                      </td>
+                      <td style={{ padding: "8px 12px", fontFamily: 'monospace' }}>
+                        {atk.sessionId}
                       </td>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <div style={{ padding: 12, color: "#9ca3af" }}>
-                No attacks for selected day
+                  ))
+                ) : !isDetailsLoading && (
+                  <tr>
+                    <td colSpan={4} style={{ padding: 16, textAlign: 'center', color: '#9ca3af' }}>
+                      No attacks for selected day
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+            {isDetailsLoading && (
+              <div style={{ textAlign: 'center', padding: '16px', color: '#9ca3af' }}>
+                Loading...
               </div>
             )}
           </div>
@@ -677,18 +771,8 @@ const DashboardPage: React.FC = () => {
           }}
         >
           {[
-            "Jan",
-            "Feb",
-            "Mar",
-            "Apr",
-            "May",
-            "Jun",
-            "Jul",
-            "Aug",
-            "Sep",
-            "Oct",
-            "Nov",
-            "Dec",
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+            "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
           ].map((m, i) => (
             <button
               key={i}

@@ -10,37 +10,33 @@ const isValidDate = (d) => d instanceof Date && !isNaN(d);
 
 /** ===== 1) 상단 카드 ===== */
 
-/** 1-1. 총 공격 수 + 전기간 대비 %  (기본 최근 7일) 
- *  GET /dashboard/stats/overview?from=YYYY-MM-DD&to=YYYY-MM-DD
- */
 router.get('/stats/overview', async (req, res) => {
   try {
+    // [수정] nowCountRow 쿼리에서 날짜 필터링을 제거하여 전체 공격 수를 집계합니다.
+    const nowCountRow = await prisma.$queryRaw`
+      SELECT COUNT(*)::int AS c
+      FROM "Session"
+      WHERE "label" <> 'NORMAL'
+    `;
+    const nowCnt = Number(nowCountRow?.[0]?.c || 0);
+    
+    // wowChangePct 계산을 위한 로직은 그대로 유지합니다.
     const to = parseDate(req.query.to) || new Date();
     const from = parseDate(req.query.from) || new Date(to.getTime() - 7 * 864e5);
     if ((req.query.from && !isValidDate(from)) || (req.query.to && !isValidDate(to))) {
       return res.status(400).json({ error: 'Invalid date for from/to' });
     }
-
-    const nowCountRow = await prisma.$queryRaw(Prisma.sql`
-      SELECT COUNT(*)::int AS c
-      FROM "Session"
-      WHERE "label" <> 'NORMAL'
-        AND "start_time" >= ${from}
-        AND "start_time" <  ${to}
-    `);
-    const nowCnt = Number(nowCountRow?.[0]?.c || 0);
-
     const spanMs = to - from;
     const prevFrom = new Date(from.getTime() - spanMs);
     const prevTo   = from;
 
-    const prevCountRow = await prisma.$queryRaw(Prisma.sql`
+    const prevCountRow = await prisma.$queryRaw`
       SELECT COUNT(*)::int AS c
       FROM "Session"
       WHERE "label" <> 'NORMAL'
         AND "start_time" >= ${prevFrom}
         AND "start_time" <  ${prevTo}
-    `);
+    `;
     const prevCnt = Number(prevCountRow?.[0]?.c || 0);
 
     const wowChangePct = prevCnt ? ((nowCnt - prevCnt) / prevCnt) * 100 : 100;
@@ -56,16 +52,13 @@ router.get('/stats/overview', async (req, res) => {
   }
 });
 
-/** 1-2. 가장 최근 공격 시각
- *  GET /dashboard/stats/recent-attack
- */
 router.get('/stats/recent-attack', async (_req, res) => {
   try {
-    const rows = await prisma.$queryRaw(Prisma.sql`
+    const rows = await prisma.$queryRaw`
       SELECT MAX("start_time") AS latest_at
       FROM "Session"
       WHERE "label" <> 'NORMAL'
-    `);
+    `;
     res.json({ latestAt: rows?.[0]?.latest_at || null });
   } catch (err) {
     console.error('[GET /dashboard/stats/recent-attack] error:', err);
@@ -73,9 +66,7 @@ router.get('/stats/recent-attack', async (_req, res) => {
   }
 });
 
-/** ===== 2) 공격 추세(그래프) =====
- *  GET /dashboard/attacks/trend?from&to&groupBy=day|hour&attackType=SQL_INJECTION
- */
+/** ===== 2) 공격 추세(그래프) ===== */
 router.get('/attacks/trend', async (req, res) => {
   try {
     const to = parseDate(req.query.to) || new Date();
@@ -86,16 +77,20 @@ router.get('/attacks/trend', async (req, res) => {
     const groupBy = (req.query.groupBy === 'hour') ? 'hour' : 'day';
     const attackType = req.query.attackType ? String(req.query.attackType) : null;
 
-    const conds = [Prisma.sql`"start_time" >= ${from}`, Prisma.sql`"start_time" < ${to}`, Prisma.sql`"label" <> 'NORMAL'`];
+    const conds = [
+      Prisma.sql`"start_time" >= ${from}`,
+      Prisma.sql`"start_time" < ${to}`,
+      Prisma.sql`"label" <> 'NORMAL'`
+    ];
     if (attackType) conds.push(Prisma.sql`"label" = ${attackType}`);
 
-    const rows = await prisma.$queryRaw(Prisma.sql`
-      SELECT date_trunc(${Prisma.raw(`'${groupBy}'`)}, "start_time") AS ts, COUNT(*)::int AS cnt
+    const rows = await prisma.$queryRaw`
+      SELECT date_trunc(${groupBy}, "start_time") AS ts, COUNT(*)::int AS cnt
       FROM "Session"
-      WHERE ${Prisma.join(conds, Prisma.sql` AND `)}
+      WHERE ${Prisma.join(conds, ' AND ')}
       GROUP BY 1
       ORDER BY 1
-    `);
+    `;
 
     const max = rows.reduce((m, r) => Math.max(m, Number(r.cnt)), 0);
     res.json({ points: rows.map(r => ({ ts: r.ts, count: Number(r.cnt) })), max });
@@ -105,10 +100,7 @@ router.get('/attacks/trend', async (req, res) => {
   }
 });
 
-/** ===== 3) Attack Details 목록 =====
- *  GET /dashboard/attacks?year&month  (또는 ?from&to)
- *      &attackType&ip&limit=12&cursor=...
- */
+/** ===== 3) Attack Details 목록 ===== */
 router.get('/attacks', async (req, res) => {
   try {
     const limit = cap(req.query.limit ?? 12, 200);
@@ -140,29 +132,28 @@ router.get('/attacks', async (req, res) => {
     if (ip) whereConds.push(Prisma.sql`"ip_address" = ${ip}`);
     if (cursor) whereConds.push(Prisma.sql`"id" < ${cursor}`);
 
-    const items = await prisma.$queryRaw(Prisma.sql`
+    const items = await prisma.$queryRaw`
       SELECT "id","label","ip_address","user_agent","start_time","confidence"
       FROM "Session"
-      WHERE ${Prisma.join(whereConds, Prisma.sql` AND `)}
+      WHERE ${Prisma.join(whereConds, ' AND ')}
       ORDER BY "id" DESC
       LIMIT ${limit}
-    `);
+    `;
 
-    // 상태코드: RawLog.audit_summary->response_status 또는 response_headers->':status' (가장 최신 로그 기준)
     const ids = items.map(it => it.id);
     let statusBySid = new Map();
     if (ids.length) {
-      const statusRows = await prisma.$queryRaw(Prisma.sql`
+      const statusRows = await prisma.$queryRaw`
         SELECT DISTINCT ON (rl."sessionId")
                rl."sessionId" AS sid,
                COALESCE(
-                 (rl."audit_summary"->>'response_status')::int,
-                 (rl."response_headers"->>':status')::int
+                 (rl.audit_summary->>'response_status')::int,
+                 (rl.response_headers->>':status')::int
                ) AS status_code
-        FROM "RawLog" rl
-        WHERE rl."sessionId" = ANY (${ids})
+        FROM "RawLog" AS rl
+        WHERE rl."sessionId" IN (${Prisma.join(ids)})
         ORDER BY rl."sessionId", rl."timestamp" DESC
-      `);
+      `;
       statusBySid = new Map(statusRows.map(r => [Number(r.sid), r.status_code ? Number(r.status_code) : null]));
     }
 
@@ -185,9 +176,7 @@ router.get('/attacks', async (req, res) => {
   }
 });
 
-/** ===== 4) 세션 상세 =====
- *  GET /dashboard/attacks/:sessionId
- */
+/** ===== 4) 세션 상세 ===== */
 router.get('/attacks/:sessionId', async (req, res) => {
   try {
     const sid = Number(req.params.sessionId);
@@ -196,8 +185,15 @@ router.get('/attacks/:sessionId', async (req, res) => {
     const session = await prisma.session.findUnique({
       where: { id: sid },
       select: {
-        id:true, session_id:true, label:true, confidence:true,
-        ip_address:true, user_agent:true, start_time:true, end_time:true, created_at:true,
+        id: true,
+        session_id: true,
+        label: true,
+        confidence: true,
+        ip_address: true,
+        user_agent: true,
+        start_time: true,
+        end_time: true,
+        created_at: true,
       },
     });
 
@@ -205,10 +201,16 @@ router.get('/attacks/:sessionId', async (req, res) => {
       where: { sessionId: sid },
       orderBy: { timestamp: 'asc' },
       select: {
-        id:true, timestamp:true, method:true, uri:true,
-        request_headers:true, request_body:true,
-        response_headers:true, response_body:true,
-        matched_rules:true, audit_summary:true,
+        id: true,
+        timestamp: true,
+        method: true,
+        uri: true,
+        request_headers: true,
+        request_body: true,
+        response_headers: true,
+        response_body: true,
+        matched_rules: true,
+        audit_summary: true,
       },
     });
 
