@@ -140,12 +140,12 @@ router.get('/:id', async (req, res) => {
 
     const orderBy = [{ timestamp: order }, { id: order }];
 
+    // 🔹 RawLog 전체 19개 필드 선택
     const rawLogs = await prisma.rawLog.findMany({
       where: { sessionId: id },
       orderBy,
       take: limit,
       ...(cursorId ? { skip: 1, cursor: { id: cursorId } } : {}),
-      // 🔹 DB 3번 스샷의 9개 컬럼과 일치하도록 선택
       select: {
         id: true,
         transaction_id: true,
@@ -154,7 +154,17 @@ router.get('/:id', async (req, res) => {
         remote_port: true,
         local_host: true,
         local_port: true,
+        method: true,
+        uri: true,
+        http_version: true,
+        host: true,
+        user_agent: true,
+        request_headers: true,
+        request_body: true,
+        response_headers: true,
+        response_body: true,
         matched_rules: true,
+        audit_summary: true,
         full_log: true,
         created_at: true,
         sessionId: true,

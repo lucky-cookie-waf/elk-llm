@@ -38,6 +38,7 @@ const Sidebar: React.FC = () => {
         background: "#0b1220",
         borderRight: "1px solid #111827",
         padding: 18,
+        flexShrink: 0, 
       }}
     >
       <div style={{ fontWeight: 900, fontSize: 22, letterSpacing: 0.2 }}>
@@ -65,7 +66,7 @@ const Sidebar: React.FC = () => {
           Rule
         </NavLink>
 
-        {/* Log Lists: /rawlog 에 있을 때도 활성화 */}
+        {/* Log Lists */}
         <NavLink
           to="/loglists"
           style={({ isActive }) => ({
@@ -103,18 +104,32 @@ const Sidebar: React.FC = () => {
 const App: React.FC = () => {
   return (
     <Router>
+      {/* 전역 안전망 */}
+      <style>{`
+        html, body, #root { overflow-x: hidden; }
+      `}</style>
+
       <div
         style={{
           display: "flex",
           minHeight: "100vh",
           background: "#0a0f1a",
           color: "#e5e7eb",
+          overflowX: "hidden",  
+          touchAction: "pan-y", 
         }}
       >
         <Sidebar />
 
         {/* Main */}
-        <main style={{ flex: 1, padding: 24 }}>
+        <main
+          style={{
+            flex: 1,
+            padding: 24,
+            minWidth: 0,        // ← 내부 스크롤러가 바깥을 밀지 않도록
+            overflowX: "hidden" // ← 메인도 가로 스크롤 금지
+          }}
+        >
           <Routes>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/rule" element={<RulePage />} />
