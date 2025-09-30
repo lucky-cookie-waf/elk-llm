@@ -4,6 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
 
+
 def create_app():
     app = Flask(__name__)
     # 간단한 설정: SQLite 파일을 instance/app.db 로
@@ -17,6 +18,11 @@ def create_app():
 
     # 블루프린트 등록
     from helloSecurity.routes.restaurant import bp as restaurants_bp
+
     app.register_blueprint(restaurants_bp)
+
+    from helloSecurity.routes.dummy import bp as dummy_bp
+
+    app.register_blueprint(dummy_bp)
 
     return app
