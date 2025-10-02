@@ -10,6 +10,11 @@ Server/*.log
 Server/modsec_logs/*.log
 Server/gen_rule/rules/
 
+# Large CSV files
+Server/dataset/raw/*.csv
+Server/dataset/test_split/*.csv
+Server/results/*.csv
+
 # Client
 # dependencies
 /node_modules
