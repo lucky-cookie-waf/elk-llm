@@ -19,9 +19,12 @@ const Card: React.FC<{ children: React.ReactNode; style?: React.CSSProperties }>
   </div>
 );
 
+// DB의 enum과 타입을 일치시킵니다.
+type StatusKind = "Accepted" | "Rejected" | "Processing";
+
 /* 상태 Pill */
 const StatusPill: React.FC<{
-  kind: "Accepted" | "Rejected" | "Processing";
+  kind: StatusKind;
   onClick?: () => void;
 }> = ({ kind, onClick }) => {
   const map = {
@@ -29,12 +32,15 @@ const StatusPill: React.FC<{
     Rejected: { bg: "#ef4444", fg: "#0f172a" },
     Processing: { bg: "#8b5cf6", fg: "#0f172a" },
   } as const;
+
+  const styleProps = map[kind] || { bg: "#6b7280", fg: "#ffffff" };
+
   return (
     <span
       onClick={onClick}
       style={{
-        background: map[kind].bg,
-        color: map[kind].fg,
+        background: styleProps.bg,
+        color: styleProps.fg,
         padding: "6px 12px",
         borderRadius: 999,
         fontWeight: 800,
@@ -43,19 +49,20 @@ const StatusPill: React.FC<{
         userSelect: "none",
       }}
     >
-      {kind}
+      {kind || 'Unknown'}
     </span>
   );
 };
 
-/* 타입 (프론트에서 사용하는 row 구조) */
+/* 타입 (백엔드 Rule 모델과 프론트엔드 Row 구조를 통합) */
 interface RuleRow {
   id: string;
   attack: string;
   suggestion: string;
   explanation: string;
-  date: string; // created_at 포맷
-  status: "Accepted" | "Rejected" | "Processing";
+  date: string;
+  status: StatusKind;
+  raw: any; // Raw rule preview를 위한 원본 데이터
 }
 
 /* 메인 페이지 */
@@ -72,16 +79,16 @@ export default function RulePage() {
         const res = await fetch("/api/rules?limit=20&offset=0");
         const data = await res.json();
 
-        // 응답 데이터 처리 전에 확인
         if (data && data.items) {
-          // 백엔드에서 내려주는 items -> RuleRow 변환
           const mapped: RuleRow[] = data.items.map((item: any) => ({
             id: String(item.id),
             attack: item.rule_name ?? "Unknown",
             suggestion: item.operator ?? "",
             explanation: item.logdata ?? "",
             date: new Date(item.created_at).toLocaleString(),
-            status: "Processing", // DB에 없음 → 프론트 전용 기본값
+            // DB에 status 필드가 없거나 null이면 'Processing'을 기본값으로 사용
+            status: item.status || "Processing", 
+            raw: item,
           }));
           setRows(mapped);
         } else {
@@ -93,17 +100,42 @@ export default function RulePage() {
         setLoading(false);
       }
     };
-
     fetchRules();
   }, []);
-
-  const handleStatusChange = (status: RuleRow["status"]) => {
+  
+  // DB 연동을 위한 비동기 API 호출 로직
+  const handleStatusChange = async (newStatus: StatusKind) => {
     if (!editingId) return;
-    setRows((prev) =>
-      prev.map((r) => (r.id === editingId ? { ...r, status } : r))
-    );
-    setEditingId(null); // 모달 닫기
+
+    try {
+      // ✅ API 경로가 '/api/rules/:id' 형태로 백엔드와 일치하는지 확인
+      const response = await fetch(`/api/rules/${editingId}`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to update status on the server');
+      }
+
+      const updatedRuleFromServer = await response.json();
+
+      setRows((prev) =>
+        prev.map((r) =>
+          r.id === editingId ? { ...r, status: updatedRuleFromServer.status } : r
+        )
+      );
+    } catch (error) {
+      console.error("Error updating rule status:", error);
+      alert('상태 변경에 실패했습니다. 서버 로그를 확인해주세요.');
+    } finally {
+      setEditingId(null);
+    }
   };
+
 
   if (loading) {
     return (
@@ -243,7 +275,7 @@ export default function RulePage() {
                             "ui-monospace, SFMono-Regular, Menlo, monospace",
                         }}
                       >
-                        {JSON.stringify(r, null, 2)}
+                        {JSON.stringify(r.raw, null, 2)}
                       </pre>
                     </Card>
                   </div>

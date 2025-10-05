@@ -68,4 +68,43 @@ router.get('/rules', async (req, res) => {
   }
 });
 
+/*
+ * ✅ [이 코드 블록 추가] 특정 Rule의 status를 업데이트하는 API
+ * PATCH /rules/:id
+ */
+router.patch('/rules/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    // status 값이 유효한지 확인
+    if (!status || !['Accepted', 'Rejected', 'Processing'].includes(status)) {
+      return res.status(400).json({ error: 'Invalid or missing status value.' });
+    }
+
+    const ruleId = parseInt(id, 10);
+    if (isNaN(ruleId)) {
+      return res.status(400).json({ error: 'Invalid rule ID.' });
+    }
+
+    const updatedRule = await prisma.rule.update({
+      where: {
+        id: ruleId,
+      },
+      data: {
+        status: status,
+      },
+    });
+
+    res.json(updatedRule); // 업데이트된 Rule 객체를 프론트엔드로 반환
+  } catch (err) {
+    // Prisma 에러 처리: id에 해당하는 레코드를 찾지 못한 경우
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2025') {
+      return res.status(404).json({ error: `Rule with ID ${id} not found.` });
+    }
+    console.error(`[PATCH /rules/${id}] error:`, err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 module.exports = router;
