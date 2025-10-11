@@ -11,8 +11,8 @@ const BATCH_SIZE = 1000;
 const CLASSIFIER_ENDPOINT =
   process.env.CLASSIFIER_ENDPOINT || 'http://ai_classifier:3002/api/classify';
 const DEBUG_CLASSIFIER = process.env.DEBUG_CLASSIFIER === '1';
-// 기본 ON, 환경변수로 '0'을 주면 가드 기능 OFF
-const USE_ANY_HIT_GUARD = process.env.USE_ANY_HIT_GUARD !== '0';
+// 분류 API 타임아웃(ms) — 서버(INFER_TIMEOUT_MS)보다 조금 짧게 권장
+const CLASSIFIER_TIMEOUT_MS = Number(process.env.CLASSIFIER_TIMEOUT_MS || 120000);
 
 // ===== 유틸 =====
 function makeAgentGroup(uaString) {
@@ -42,37 +42,6 @@ function toConfidenceEnum(raw) {
   return null;
 }
 
-// ★ 공격 태그/차단 여부 뽑기
-function extractSignals(row) {
-  const ad = row.audit_summary || {};
-  const messages = Array.isArray(row.matched_rules) ? row.matched_rules : [];
-  const disruptive = !!(ad && ad.intervention && ad.intervention.disruptive);
-
-  const tagSet = new Set();
-  for (const m of messages) {
-    const tags = (m && (m.tags || m.TAGS || m.tag)) || [];
-    const arr = Array.isArray(tags) ? tags : [tags];
-    for (const t of arr) {
-      if (!t) continue;
-      const tt = String(t).toLowerCase();
-      if (tt.includes('sqli') || tt.includes('sql')) tagSet.add('sqli');
-      if (tt.includes('xss')) tagSet.add('xss');
-      if (tt.includes('rce') || tt.includes('code')) tagSet.add('code');
-      if (tt.includes('traversal') || tt.includes('path') || tt.includes('lfi'))
-        tagSet.add('path');
-    }
-  }
-  return { disruptive, tagSet };
-}
-
-// ★ 태그로 라벨 추론(Any-hit 가드용)
-function labelFromTags(tagSet) {
-  if (tagSet.has('sqli')) return 'SQL_INJECTION';
-  if (tagSet.has('path')) return 'PATH_TRAVERSAL';
-  if (tagSet.has('code') || tagSet.has('xss')) return 'CODE_INJECTION';
-  return null;
-}
-
 // (백업) 텍스트 휴리스틱
 function heuristicLabel(sampleTexts) {
   const text = (sampleTexts || []).join(' ').toLowerCase();
@@ -96,7 +65,7 @@ async function classifySession(aiRequests, sessionSummaryForFallback) {
     const { data } = await axios.post(
       CLASSIFIER_ENDPOINT,
       { session: aiRequests },
-      { timeout: 5000 }
+      { timeout: CLASSIFIER_TIMEOUT_MS }
     );
 
     const classificationRaw = data?.classification ?? null;
@@ -131,8 +100,8 @@ async function classifySession(aiRequests, sessionSummaryForFallback) {
 async function run() {
   console.log('[*] Sessionizing start');
 
-  // ★ key를 remote_host + agent_group로 교체 (remote_port 제거)
-  const active = new Map(); // key = `${remote_host}|${agent_group}`
+  // key = remote_host + agent_group
+  const active = new Map();
   let batchNo = 0;
   let lastId = 0;
 
@@ -149,48 +118,22 @@ async function run() {
       paths: Array.from(s.paths).slice(0, 100),
       methods: Array.from(s.methods),
       samples: Array.from(s.samples).slice(0, 50),
-      // ★ 공격 신호 요약
-      blockedCount: s.blockedCount,
-      attackTags: Array.from(s.attackTags),
     };
 
     // 분류기에 보낼 요청 배열
-    const aiRequests =
-      (s.preview && s.preview.length)
-        ? s.preview
-        : Array.from(s.samples).slice(0, 3).map(txt => ({
-            request_http_method: 'GET',
-            request_http_request: (txt.split(' ')[1] || '/'),
-            request_body: '',
-            user_agent: s.user_agent || ''
-          }));
+    const aiRequests = Array.from(s.samples).map(txt => ({
+      request_http_method: 'GET',
+      request_http_request: (txt.split(' ')[1] || '/'),
+      request_body: '',
+      user_agent: s.user_agent || ''
+    }));
 
-    // ★ Any-hit 가드: 공격 신호가 있으면 우선 라벨 확정
-    let guardLabel = null;
-    if (USE_ANY_HIT_GUARD) {
-      if (s.blockedCount > 0) {
-        // 차단이 있었는데 공격 태그가 있으면 해당 태그 라벨, 없으면 MALICIOUS으로 방어적 분류
-        guardLabel = labelFromTags(s.attackTags) || 'MALICIOUS';
-      } else {
-        // 차단이 없어도 공격 태그가 있으면 해당 라벨
-        guardLabel = labelFromTags(s.attackTags);
-      }
-    }
-
-    let label, confidence, classifier_raw, classification;
-    if (guardLabel) {
-      label = guardLabel;
-      confidence = 'HIGH';
-      classifier_raw = JSON.stringify({ guard: summary });
-      classification = 'guard:auto';
-    } else {
-      // 가드 없으면 분류기 호출
-      const res = await classifySession(aiRequests, summary);
-      label = res.label;
-      confidence = res.confidence;
-      classifier_raw = res.classifier_raw;
-      classification = res.classification;
-    }
+    // 가드 없이 항상 분류기 호출
+    const res = await classifySession(aiRequests, summary);
+    const label = res.label;
+    const confidence = res.confidence;
+    const classifier_raw = res.classifier_raw;
+    const classification = res.classification;
 
     // 세션 ID(결정적): ip + agent + start
     const sessionIdStr = `${s.remote_host || 'NA'}|${s.agent_group}|${s.start.toISOString()}`;
@@ -235,27 +178,36 @@ async function run() {
   while (true) {
     batchNo += 1;
 
-    // ★ 공격 신호 필드(matched_rules, audit_summary)도 함께 읽어오기
-    const rows = await prisma.rawLog.findMany({
-      where: {
-        sessionId: null,
-        id: { gt: lastId },
-      },
-      orderBy: { id: 'asc' },
-      take: BATCH_SIZE,
-      select: {
-        id: true,
-        timestamp: true,
-        remote_host: true,
-        remote_port: true,    // (키에는 안 씀, 참고용)
-        user_agent: true,
-        method: true,
-        uri: true,
-        request_body: true,
-        matched_rules: true,  // ★
-        audit_summary: true,  // ★ (intervention.disruptive 등)
-      },
-    });
+    // 차단(실제 disruptive) 로그 제외 + 시간/ID 순으로 읽기
+    const rows = await prisma.$queryRaw`
+      SELECT
+        r.id,
+        r.timestamp,
+        r.remote_host,
+        r.remote_port,
+        r.user_agent,
+        r.method,
+        r.uri,
+        r.request_body,
+        r.matched_rules,
+        r.audit_summary
+      FROM "RawLog" r
+      WHERE r."sessionId" IS NULL
+        AND r.id > ${lastId}
+        AND NOT (
+          -- ① 확정: transaction.interruption 존재 → 실제 차단
+          COALESCE(r.full_log->'transaction', '{}'::jsonb) ? 'interruption'
+          -- ② 보조: 개별 룰이 disruptive였거나, Access denied 문구가 남은 경우
+          OR EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(COALESCE(r.matched_rules, '[]'::jsonb)) AS m
+            WHERE (m->'details'->>'disruptive')::boolean = true
+               OR COALESCE(m->>'message', m->>'msg','') ILIKE '%Access denied with code%'
+          )
+        )
+      ORDER BY r.id ASC
+      LIMIT ${BATCH_SIZE}
+    `;
 
     if (rows.length === 0) break;
 
@@ -269,7 +221,7 @@ async function run() {
       const ua = r.user_agent || '';
       const agent_group = makeAgentGroup(ua);
 
-      // ★ 세션 키: remote_host + agent_group
+      // 세션 키: remote_host + agent_group
       const key = `${r.remote_host || 'NA'}|${agent_group}`;
 
       let s = active.get(key);
@@ -287,9 +239,6 @@ async function run() {
           samples: new Set(),
           preview: [],
           rawLogIds: [],
-          // ★ 공격 신호 누적
-          blockedCount: 0,
-          attackTags: new Set(),
         };
         active.set(key, s);
       }
@@ -311,8 +260,6 @@ async function run() {
           samples: new Set(),
           preview: [],
           rawLogIds: [],
-          blockedCount: 0,
-          attackTags: new Set(),
         };
         active.set(key, s);
       }
@@ -327,20 +274,6 @@ async function run() {
       if (snippet) s.samples.add(snippet);
       s.rawLogIds.push(r.id);
 
-      // ★ 공격 신호 누적
-      const sig = extractSignals(r);
-      if (sig.disruptive) s.blockedCount += 1;
-      for (const ttag of sig.tagSet) s.attackTags.add(ttag);
-
-      // 분류기 프리뷰(최대 3개)
-      if (s.preview.length < 3) {
-        s.preview.push({
-          request_http_method: r.method || 'GET',
-          request_http_request: r.uri || '',
-          request_body: r.request_body || '',
-          user_agent: s.user_agent || ''
-        });
-      }
     }
 
     // 배치 경계에서 닫힌 세션 flush

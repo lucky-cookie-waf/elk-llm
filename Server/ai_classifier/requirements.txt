@@ -1,9 +1,24 @@
-transformers>=4.30.0
-torch>=2.0.0
-tokenizers>=0.13.0
-safetensors>=0.3.0
-accelerate>=0.20.0
-huggingface_hub>=0.16.0
-protobuf>=3.20.0
+# ai-classifier/requirements.txt
+
+# Core runtime (Torch 2.3+ 권장)
+torch>=2.3.0
+
+# HF 스택 — 4bit/PEFT/허브 로그인 호환 버전
+transformers>=4.43.0
+tokenizers>=0.19.1
+accelerate>=0.33.0
+peft>=0.12.0
+huggingface_hub>=0.24.6
+hf_transfer>=0.1.6
+
+# I/O & formats
+safetensors>=0.4.3
 sentencepiece>=0.1.99
-peft>=0.6.0
+protobuf>=3.20.0,<5
+python-dotenv==1.0.1
+
+# 4-bit quantization (Linux/macOS 전용; Windows는 자동 미설치)
+bitsandbytes>=0.43.0; platform_system != "Windows"
+
+fastapi>=0.111.0
+uvicorn[standard]>=0.30.0
