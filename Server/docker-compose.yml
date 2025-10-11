@@ -7,6 +7,7 @@ networks:
 
 volumes:
   pgdata:
+  hf-cache:
 
 services:
   postgres:
@@ -153,25 +154,26 @@ services:
     command: ["python", "-u", "main.py"]  # ⬅️ gen_rule은 main.py만 실행
 
   ai_classifier:
+    ports:
+      - "3002:3002"
     build:
       context: ./ai_classifier
       dockerfile: Dockerfile
     container_name: ai_classifier
-    ports:
-      - "3002:3002"
     restart: unless-stopped
     env_file:
-      - ./.env.shared
       - ./ai_classifier/.env
     environment:
-      - NODE_OPTIONS="--dns-result-order=ipv4first"
-      - HF_HOME=/tmp/hf
-      - HUGGINGFACE_HUB_CACHE=/tmp/hf
-      - TRANSFORMERS_CACHE=/tmp/hf
-      - HOME=/tmp
-
-    dns: ["1.1.1.1", "8.8.8.8"]
+      - HF_HOME=/app/.cache/huggingface
+      - TRANSFORMERS_CACHE=/app/.cache/huggingface
+      #- HF_HUB_ENABLE_HF_TRANSFER=1
+      - SESSION_MAX_REQ=20
+    volumes:
+      - hf-cache:/app/.cache/huggingface   # ← 각자 로컬 PC에만 영속
     networks:
       - web-network
-    #depends_on:
-      #- postgres
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:3002/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
