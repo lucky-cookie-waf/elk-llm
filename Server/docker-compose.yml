@@ -154,24 +154,30 @@ services:
     command: ["python", "-u", "main.py"]  # ⬅️ gen_rule은 main.py만 실행
 
   ai_classifier:
-    ports:
-      - "3002:3002"
     build:
       context: ./ai_classifier
       dockerfile: Dockerfile
     container_name: ai_classifier
     restart: unless-stopped
+
+    # HF_ENDPOINT_URL, HF_API_KEY 등은 여기에서 로드
     env_file:
       - ./ai_classifier/.env
+
     environment:
-      - HF_HOME=/app/.cache/huggingface
-      - TRANSFORMERS_CACHE=/app/.cache/huggingface
-      #- HF_HUB_ENABLE_HF_TRANSFER=1
-      - SESSION_MAX_REQ=20
-    volumes:
-      - hf-cache:/app/.cache/huggingface   # ← 각자 로컬 PC에만 영속
+      - SESSION_MAX_REQ=20    # 세션당 최대 요청 줄 수 (원래 값 유지)
+
+    # 로컬 테스트용 포트 공개 (원하면 유지, 필요 없으면 지워도 됨)
+    ports:
+      - "3002:3002"
+
+    # 더 이상 모델 캐시용 볼륨 불필요 → 삭제
+    # volumes:
+    #   - hf-cache:/app/.cache/huggingface
+
     networks:
       - web-network
+
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://localhost:3002/health"]
       interval: 10s

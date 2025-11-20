@@ -1,24 +1,11 @@
-# ai-classifier/requirements.txt
+# ai_classifier/requirements.txt
 
-# Core runtime (Torch 2.3+ 권장)
-torch>=2.3.0
-
-# HF 스택 — 4bit/PEFT/허브 로그인 호환 버전
-transformers>=4.43.0
-tokenizers>=0.19.1
-accelerate>=0.33.0
-peft>=0.12.0
-huggingface_hub>=0.24.6
-hf_transfer>=0.1.6
-
-# I/O & formats
-safetensors>=0.4.3
-sentencepiece>=0.1.99
-protobuf>=3.20.0,<5
-python-dotenv==1.0.1
-
-# 4-bit quantization (Linux/macOS 전용; Windows는 자동 미설치)
-bitsandbytes>=0.43.0; platform_system != "Windows"
-
+# Web server
 fastapi>=0.111.0
 uvicorn[standard]>=0.30.0
+
+# HTTP client (for calling HF Inference Endpoint)
+requests>=2.31.0
+
+# Optional: if you want to load .env manually in code (현재는 FastAPI/uvicorn에서 env_file 쓰니까 필수는 아님)
+python-dotenv==1.0.1
