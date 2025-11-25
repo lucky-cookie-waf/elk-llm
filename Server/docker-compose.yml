@@ -142,7 +142,7 @@ services:
       - ./gen_rule/.env
       - ./.env.shared
     #environment:
-      #DATABASE_URL: postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs
+      
     networks:
       - web-network
     #depends_on:
