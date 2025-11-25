@@ -5,7 +5,7 @@ from psycopg2 import sql
 
 RULE_FILE_PATH = os.getenv("RULE_FILE_PATH", "rules/custom_rules.conf")
 # Prisma 전용 파라미터(schema, pgbouncer, connection_limit)는 절대 넣지 말 것!
-DEFAULT_DB_URL = "postgresql://postgres.nqpshpimhofnjxlcepop:luckycookiedb123@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require"
+DEFAULT_DB_URL = ""
 
 def get_conn():
     """
