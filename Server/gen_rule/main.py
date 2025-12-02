@@ -1,16 +1,21 @@
-# ===== imports (모듈 상단) =====
-import os, json, re
+import os
+import json
+import re
 import psycopg2
 from psycopg2 import sql
+from dotenv import load_dotenv
 
-RULE_FILE_PATH = os.getenv("RULE_FILE_PATH", "rules/custom_rules.conf")
-# Prisma 전용 파라미터(schema, pgbouncer, connection_limit)는 절대 넣지 말 것!
+# 분리된 파일 import
+from gpt_generator import generate_modsec_rule
+
+load_dotenv()
+
+# ===== 설정 =====
 DEFAULT_DB_URL = "postgresql://postgres.nqpshpimhofnjxlcepop:luckycookiedb123@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require"
 
+
+# ===== DB Helper =====
 def get_conn():
-    """
-    psycopg2 연결을 만들고 search_path를 설정한다.
-    """
     db_url = os.getenv("DATABASE_URL", DEFAULT_DB_URL)
     schema = os.getenv("DB_SCHEMA", "public")
     conn = psycopg2.connect(db_url)
@@ -18,55 +23,56 @@ def get_conn():
         cur.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
     return conn
 
-# ========== fetch_next_uncovered_session_and_logs ==========
+
+# ===== Fetch Logic =====
 def fetch_next_uncovered_session_and_logs():
-    """
-    아직 어떤 Rule에도 출처로 기록되지 않은 MALICIOUS 세션 1건과 그 세션의 로그를 가져온다.
-    반환: (logs_data, session_info)
-      - logs_data: format_logs_for_prompt()가 처리할 수 있는 딕셔너리 리스트
-      - session_info: {"id", "session_id", "ip_address", "user_agent"}
-    """
     conn = get_conn()
     try:
         with conn.cursor() as cur:
-            # 아직 어떤 Rule에도 출처로 기록되지 않은 MALICIOUS 세션 1건
-            cur.execute("""
-                SELECT s.id, s.session_id, s.ip_address, s.user_agent
+            # 1. 세션 가져오기
+            cur.execute(
+                """
+                SELECT s.id, s.session_id, s.ip_address, s.user_agent, s.classification
                   FROM "Session" s
                  WHERE s."label" = 'MALICIOUS'
                    AND EXISTS (SELECT 1 FROM "RawLog" rl WHERE rl."sessionId" = s.id)
                    AND NOT EXISTS (
                         SELECT 1
                           FROM "Rule" r
-                         CROSS JOIN LATERAL jsonb_array_elements(r.rule_template->'source_sessions') e
-                         WHERE e->>'session_id' = s.session_id
+                          CROSS JOIN LATERAL jsonb_array_elements(r.rule_template->'source_sessions') e
+                          WHERE e->>'session_id' = s.session_id
                    )
                  ORDER BY s.start_time NULLS LAST
                  LIMIT 1;
-            """)
+            """
+            )
             row = cur.fetchone()
             if not row:
                 return None, None
 
-            sid, session_id, ip, ua = row
+            sid, session_id, ip, ua, classification = row
+
+            # [정의 위치 1] 여기서 session_info 딕셔너리가 만들어집니다.
             session_info = {
                 "id": sid,
                 "session_id": session_id,
                 "ip_address": ip,
                 "user_agent": ua,
+                "attack_type": classification if classification else "Generic Attack",
             }
 
-            # 해당 세션의 RawLog들
-            cur.execute("""
-                SELECT
-                    rl."method", rl."uri", rl."request_headers", rl."request_body",
-                    rl."matched_rules", rl."audit_summary", rl."full_log",
-                    rl."timestamp"
+            # 2. 로그 가져오기
+            cur.execute(
+                """
+                SELECT rl."method", rl."uri", rl."request_headers", rl."request_body",
+                       rl."matched_rules", rl."audit_summary", rl."full_log", rl."timestamp"
                 FROM "RawLog" rl
                 WHERE rl."sessionId" = %s
                 ORDER BY rl."timestamp" ASC
-                LIMIT 200;
-            """, (sid,))
+                LIMIT 50;
+            """,
+                (sid,),
+            )
             rows = cur.fetchall()
 
             def _parse_headers(h):
@@ -74,254 +80,201 @@ def fetch_next_uncovered_session_and_logs():
                     return {}
                 if isinstance(h, dict):
                     return h
-                if isinstance(h, str):
-                    try:
-                        return json.loads(h)
-                    except Exception:
-                        return {}
-                return {}
+                try:
+                    return json.loads(h)
+                except:
+                    return {}
 
-            logs_data = [{
-                "method": r[0],
-                "uri": r[1],
-                "request_headers": _parse_headers(r[2]),
-                "request_body": r[3],
-                "matched_rules": r[4],
-                "audit_summary": r[5],
-                "full_log": r[6],
-                "timestamp": r[7],
-            } for r in rows]
+            logs_data = [
+                {
+                    "method": r[0],
+                    "uri": r[1],
+                    "headers": _parse_headers(r[2]),
+                    "request_body": r[3],
+                    "matched_rules": r[4],
+                    "timestamp": r[7],
+                }
+                for r in rows
+            ]
 
             return logs_data, session_info
+
+    except Exception as e:
+        print(f"❌ DB Fetch Error: {e}")
+        conn.rollback()
+        # [중요 수정] 에러 발생 시에도 안전하게 None을 반환해야 main에서 언패킹 에러가 안 납니다.
+        return None, None
+
     finally:
         conn.close()
 
-# ========== fetch_malicious_logs_from_db ==========
-def fetch_malicious_logs_from_db():
-    """
-    MALICIOUS로 라벨링된 세션의 로그를 데이터베이스에서 가져옵니다.
-    """
+
+def format_logs_for_prompt(logs: list, session_info: dict) -> str:
+    result = f"Session ID: {session_info.get('session_id')}\n"
+    result += f"IP: {session_info.get('ip_address')}\n"
+    result += f"User Agent: {session_info.get('user_agent')}\n\n"
+
+    result += "=== Request Logs ===\n"
+    for i, log in enumerate(logs, 1):
+        result += f"\nRequest #{i}:\n"
+        result += f"{log['method']} {log['uri']}\n"
+        if log.get("request_body"):
+            result += f"Body: {log['request_body']}\n"
+
+        headers = log.get("headers", {})
+        if headers:
+            # 중요 헤더만 필터링하여 토큰 절약
+            important_headers = [
+                "host",
+                "content-type",
+                "cookie",
+                "referer",
+                "user-agent",
+            ]
+            header_str = "\n".join(
+                [
+                    f"  {k}: {v}"
+                    for k, v in headers.items()
+                    if k.lower() in important_headers
+                ]
+            )
+            if header_str:
+                result += f"Headers:\n{header_str}\n"
+
+    return result
+
+
+# ===== Save Logic =====
+def save_rule_to_db(rule_text: str, source_session: dict) -> int:
+    # ▲ 여기서 'session_info' 값을 'source_session'이라는 이름으로 받습니다.
+    import re, json
+
+    # 정규식 정의
+    RULE_ID_RE = re.compile(r"\bid\s*:\s*(\d+)\b", re.I)
+    PHASE_RE = re.compile(r"\bphase\s*:\s*(\d+)\b", re.I)
+    SEVERITY_RE = re.compile(r"severity\s*:\s*'?(CRITICAL|HIGH|MEDIUM|LOW)'?", re.I)
+    MSG_RE = re.compile(r"msg\s*:\s*'([^']+)'", re.I)
+    LOGDATA_RE = re.compile(r"logdata\s*:\s*'([^']+)'", re.I)
+    TRANS_RE = re.compile(r"\bt\s*:\s*([A-Za-z0-9:,_-]+)", re.I)
+    SEC_RULE_LINE = re.compile(r'^\s*SecRule\s+([^\s"]+)\s+"@([^"]+)"', re.I)
+
+    # 1. 룰 파싱
+    rid_m = RULE_ID_RE.search(rule_text)
+    phase_m = PHASE_RE.search(rule_text)
+    sev_m = SEVERITY_RE.search(rule_text)
+    msg_m = MSG_RE.search(rule_text)
+    log_m = LOGDATA_RE.search(rule_text)
+    trans_m = TRANS_RE.search(rule_text)
+    sec_rule = SEC_RULE_LINE.match(rule_text.strip().splitlines()[0])
+
     conn = get_conn()
     try:
         with conn.cursor() as cur:
+            # 2. Rule ID 결정
+            if rid_m:
+                rule_id = int(rid_m.group(1))
+            else:
+                cur.execute('SELECT COALESCE(MAX(rule_id), 9000000)+1 FROM "Rule";')
+                rule_id = cur.fetchone()[0]
+                if "id:" not in rule_text:
+                    rule_text = (
+                        rule_text.strip().rstrip('"') + f',\\\n    id:{rule_id}"'
+                    )
+
+            # 3. Source Session JSON 구조 생성
+            src_sessions = [
+                {
+                    "session_id": source_session["session_id"],
+                    "ip_address": source_session["ip_address"],
+                    "user_agent": source_session["user_agent"],
+                }
+            ]
+
+            template_json = json.dumps(
+                {"raw": rule_text, "source_sessions": src_sessions}
+            )
+
+            target_val = sec_rule.group(1) if sec_rule else "UNKNOWN"
+            op_val = "@" + sec_rule.group(2) if sec_rule else "UNKNOWN"
+            severity = sev_m.group(1).upper() if sev_m else "MEDIUM"
+            msg = msg_m.group(1) if msg_m else f"Auto-generated rule {rule_id}"
+
             query = """
-            SELECT 
-                rl."method",
-                rl."uri",
-                rl."request_headers",
-                rl."request_body",
-                rl."matched_rules",
-                rl."audit_summary",
-                rl."full_log",
-                s."session_id",
-                s."ip_address",
-                s."user_agent"
-            FROM "RawLog" rl
-            JOIN "Session" s ON rl."sessionId" = s."id"
-            WHERE s."label" = 'MALICIOUS'
-            ORDER BY rl."timestamp" ASC;
+                INSERT INTO "Rule" (
+                    rule_id, rule_name, target, operator, phase, action, 
+                    transformation, severity_level, logdata, rule_template, status
+                ) VALUES (
+                    %s, %s, %s, %s, %s, %s, 
+                    %s, %s, %s, %s::jsonb, 'Processing'
+                )
+                ON CONFLICT (rule_id) DO UPDATE SET
+                    rule_template = EXCLUDED.rule_template,
+                    rule_name = EXCLUDED.rule_name
+                RETURNING id;
             """
-            cur.execute(query)
-            rows = cur.fetchall()
+
+            cur.execute(
+                query,
+                (
+                    rule_id,
+                    msg,
+                    target_val,
+                    op_val,
+                    int(phase_m.group(1)) if phase_m else 2,
+                    "deny",
+                    trans_m.group(1) if trans_m else "",
+                    severity,
+                    log_m.group(1) if log_m else "",
+                    template_json,
+                ),
+            )
+
+            new_pk = cur.fetchone()[0]
+            conn.commit()
+            print(f"✅ Saved rule to DB (PK: {new_pk}, RuleID: {rule_id})")
+            return new_pk
+
+    except Exception as e:
+        conn.rollback()
+        print(f"❌ DB Error: {e}")
+        return -1
     finally:
         conn.close()
 
-    def _parse_headers(h):
-        if not h:
-            return {}
-        if isinstance(h, dict):
-            return h
-        if isinstance(h, str):
-            try:
-                return json.loads(h)
-            except Exception:
-                return {}
-        return {}
 
-    logs = []
-    session_info = {}
+# ===== Main Execution =====
+def main():
+    print("🔍 Searching for uncovered malicious sessions...")
 
-    for row in rows:
-        (method, uri, headers_json, body, matched_rules,
-         audit_summary, full_log, session_id, ip_address, user_agent) = row
+    # [정의 위치 2] 여기서 값을 받아옵니다.
+    logs, session_info = fetch_next_uncovered_session_and_logs()
 
-        if not session_info:
-            session_info = {
-                "session_id": session_id,
-                "ip_address": ip_address,
-                "user_agent": user_agent
-            }
+    # logs가 None이면(DB 에러 혹은 데이터 없음) session_info도 None이므로 종료
+    if not logs:
+        print("🎉 No new malicious sessions found or DB Error.")
+        return
 
-        log_entry = {
-            "method": method,
-            "uri": uri,
-            "headers": _parse_headers(headers_json),
-            "matched_rules": matched_rules,
-            "audit_summary": audit_summary
-        }
-        if body:
-            log_entry["body"] = body
-        logs.append(log_entry)
+    print(
+        f"⚠️  Processing Session: {session_info['session_id']} (Type: {session_info['attack_type']})"
+    )
 
-    return logs, session_info
+    # 1. 프롬프트용 로그 포맷팅
+    logs_text = format_logs_for_prompt(logs, session_info)
 
-# ========== format_logs_for_prompt (무변경, 단 import json 상단 보장) ==========
-def format_logs_for_prompt(logs: list, session_info: dict) -> str:
-    result = f"Session ID: {session_info.get('session_id', 'Unknown')}\n"
-    result += f"IP Address: {session_info.get('ip_address', 'Unknown')}\n"
-    result += f"User Agent: {session_info.get('user_agent', 'Unknown')}\n\n"
-    
-    result += "Malicious Requests:\n"
-    for i, log in enumerate(logs, 1):
-        result += f"\n[{i}] {log['method']} {log['uri']}\n"
-        if log.get('headers'):
-            headers = "\n".join([f"  {k}: {v}" for k, v in log['headers'].items()])
-            result += f"Headers:\n{headers}\n"
-        if log.get('body'):
-            result += f"Body:\n{log['body']}\n"
-        if log.get('matched_rules'):
-            result += f"Matched Rules: {json.dumps(log['matched_rules'], indent=2)}\n"
-        if log.get('audit_summary'):
-            result += f"Audit Summary: {json.dumps(log['audit_summary'], indent=2)}\n"
-    return result
+    # 2. 룰 생성
+    print("⚙️  Generating Rule from LLM...")
+    rule_content = generate_modsec_rule(logs_text, session_info["attack_type"])
 
-# ========== save_rule_to_db (DSN 정리 + search_path 통일) ==========
-def save_rule_to_db(rule_text: str, source_sessions=None) -> int:
-    import re, json  # 상단 import가 있지만, 로컬에서도 문제 없게 둠
+    print("-" * 40)
+    print("🔥 Generated Rule:")
+    print(rule_content)
+    print("-" * 40)
 
-    # Prisma 전용 파라미터 제거된 DSN 사용
-    db_url = os.getenv("DATABASE_URL", DEFAULT_DB_URL)
-    schema = os.getenv("DB_SCHEMA", "public")
+    # 3. DB 저장
+    print("💾 Saving to Database...")
+    # [사용 위치] 위에서 정의된 session_info를 함수로 넘겨줍니다.
+    save_rule_to_db(rule_content, session_info)
 
-    RULE_ID_RE  = re.compile(r'\bid\s*:\s*(\d+)\b', re.I)
-    PHASE_RE    = re.compile(r'\bphase\s*:\s*(\d+)\b', re.I)
-    SEVERITY_RE = re.compile(r"severity\s*:\s*'?(CRITICAL|HIGH|MEDIUM|LOW)'?", re.I)
-    MSG_RE      = re.compile(r"msg\s*:\s*'([^']+)'", re.I)
-    LOGDATA_RE  = re.compile(r"logdata\s*:\s*'([^']+)'", re.I)
-    TRANS_RE    = re.compile(r'\bt\s*:\s*([A-Za-z0-9:,_-]+)', re.I)
-    SEC_RULE_LINE = re.compile(r'^\s*SecRule\s+([^\s"]+)\s+"@([^"]+)"', re.I)
 
-    def _norm_sessions(src):
-        def one(x):
-            if x is None: return None
-            if isinstance(x, str): return {"session_id": x}
-            if isinstance(x, dict):
-                return {
-                    "session_id": x.get("session_id") or x.get("sessionId") or x.get("label"),
-                    "id": x.get("id"),
-                    "ip_address": x.get("ip_address") or x.get("ipAddress"),
-                    "user_agent": x.get("user_agent") or x.get("userAgent"),
-                }
-            sid = getattr(x, "session_id", None) or getattr(x, "sessionId", None)
-            return {
-                "session_id": sid,
-                "id": getattr(x, "id", None),
-                "ip_address": getattr(x, "ip_address", None) or getattr(x, "ipAddress", None),
-                "user_agent": getattr(x, "user_agent", None) or getattr(x, "userAgent", None),
-            }
-        if src is None: return []
-        if isinstance(src, (list, tuple, set)):
-            out = [one(i) for i in src]
-        else:
-            out = [one(src)]
-        return [v for v in out if v and v.get("session_id")]
-
-    # 1) 체인 타겟/연산자 모으기
-    targets, operators = [], []
-    for ln in rule_text.splitlines():
-        m = SEC_RULE_LINE.match(ln)
-        if m:
-            targets.append(m.group(1))
-            operators.append('@' + m.group(2))
-    target_s = "; ".join(targets) if targets else ""
-    operator_s = "; ".join(operators) if operators else ""
-
-    rid_m = RULE_ID_RE.search(rule_text)
-    phase_m = PHASE_RE.search(rule_text)
-    sev_m   = SEVERITY_RE.search(rule_text)
-    msg_m   = MSG_RE.search(rule_text)
-    log_m   = LOGDATA_RE.search(rule_text)
-    trans_m = TRANS_RE.search(rule_text)
-    new_src = _norm_sessions(source_sessions)
-
-    conn = psycopg2.connect(db_url)
-    try:
-        # search_path 통일
-        with conn:
-            with conn.cursor() as cur:
-                cur.execute(sql.SQL("SET search_path TO {}").format(sql.Identifier(schema)))
-
-                # 2) rule_id 결정
-                if rid_m:
-                    rule_id = int(rid_m.group(1))
-                else:
-                    cur.execute('SELECT COALESCE(MAX(rule_id), 1000000)+1 FROM "Rule";')
-                    rule_id = cur.fetchone()[0]
-                    # (옵션) rule_text 내 id 값도 업데이트하고 싶다면 여기를 유지
-                    rule_text = re.sub(r'\bid\s*:\s*\d+\b', f'id:{rule_id}', rule_text)
-
-                # 3) 기존 레코드가 있으면 source_sessions 병합
-                cur.execute('SELECT rule_template FROM "Rule" WHERE rule_id=%s;', (rule_id,))
-                row = cur.fetchone()
-                merged_src = new_src
-                if row:
-                    try:
-                        existing = row[0] or {}
-                        # row[0]이 jsonb→dict로 올 수도, str로 올 수도 있으니 처리
-                        if isinstance(existing, str):
-                            existing = json.loads(existing)
-                        exist_src = existing.get("source_sessions") or []
-                        seen = {e.get("session_id") for e in exist_src if isinstance(e, dict)}
-                        for s in new_src:
-                            if s["session_id"] not in seen:
-                                exist_src.append(s); seen.add(s["session_id"])
-                        merged_src = exist_src
-                    except Exception:
-                        pass  # 실패해도 새 값만 사용
-
-                payload = {
-                    "rule_id": rule_id,
-                    "rule_name": (msg_m.group(1) if msg_m else "Custom rule generated"),
-                    "target": target_s,
-                    "operator": operator_s,
-                    "phase": int(phase_m.group(1)) if phase_m else 2,
-                    "action": "block" if ((" block" in f" {rule_text}".lower()) or (" deny" in f" {rule_text}".lower())) else "deny",
-                    "transformation": trans_m.group(1).strip() if trans_m else "",
-                    "severity_level": (sev_m.group(1).upper() if sev_m else "MEDIUM"),
-                    "logdata": log_m.group(1) if log_m else "",
-                    "rule_template": json.dumps({
-                        "raw": rule_text,
-                        "chain": ("chain" in rule_text.lower()),
-                        "phase": int(phase_m.group(1)) if phase_m else 2,
-                        "targets": target_s,
-                        "operators": operator_s,
-                        "transformation": trans_m.group(1).strip() if trans_m else "",
-                        "severity": (sev_m.group(1).upper() if sev_m else "MEDIUM"),
-                        "logdata": log_m.group(1) if log_m else "",
-                        "source_sessions": merged_src,
-                    }),
-                }
-
-                # 4) 업서트
-                cur.execute("""
-                    INSERT INTO "Rule"
-                      (rule_id, rule_name, target, operator, phase, action, transformation, severity_level, logdata, rule_template)
-                    VALUES
-                      (%(rule_id)s, %(rule_name)s, %(target)s, %(operator)s, %(phase)s, %(action)s, %(transformation)s, %(severity_level)s, %(logdata)s, %(rule_template)s::jsonb)
-                    ON CONFLICT (rule_id) DO UPDATE SET
-                      rule_name      = EXCLUDED.rule_name,
-                      target         = EXCLUDED.target,
-                      operator       = EXCLUDED.operator,
-                      phase          = EXCLUDED.phase,
-                      action         = EXCLUDED.action,
-                      transformation = EXCLUDED.transformation,
-                      severity_level = EXCLUDED.severity_level,
-                      logdata        = EXCLUDED.logdata,
-                      rule_template  = EXCLUDED.rule_template
-                    RETURNING id;
-                """, payload)
-                new_id = cur.fetchone()[0]
-                print(f"💾 Saved rule to DB: id={new_id}, rule_id={rule_id}")
-                return new_id
-    finally:
-        conn.close()
+if __name__ == "__main__":
+    main()
