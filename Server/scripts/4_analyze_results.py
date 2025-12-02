@@ -4,8 +4,11 @@ from sklearn.metrics import classification_report, confusion_matrix
 df = pd.read_csv("results/modsec_only_results.csv")
 
 # 탐지되면 실제 라벨을 맞췄다고 가정 (단순화)
-df["modsec_prediction"] = df.apply(
-    lambda x: x["actual_label"] if x["modsec_detected"] else "Normal", axis=1
+df["modsec_prediction"] = df["modsec_detected"].apply(
+    lambda x: "Attack" if x else "Normal"
+)
+df["binary_actual"] = df["actual_label"].apply(
+    lambda x: "Normal" if x == "Normal" else "Attack"
 )
 
 print("❤️ ModSecurity 성능 분석 ❤️\n")
@@ -14,16 +17,12 @@ print("❤️ ModSecurity 성능 분석 ❤️\n")
 print("Confuxion Matrix:")
 print(
     confusion_matrix(
-        df["actual_label"],
-        df["modsec_prediction"],
-        labels=["Normal", "SQL Injection", "Code Injection", "Path Traversal"],
+        df["binary_actual"], df["modsec_prediction"], labels=["Normal", "Attack"]
     )
 )
 
 print("\n상세 리포트:")
-print(
-    classification_report(df["actual_label"], df["modsec_prediction"], zero_division=0)
-)
+print(classification_report(df["binary_actual"], df["modsec_prediction"]))
 
 # False Negatives (놓친 공격들)
 fn = df[(df["actual_label"] != "Normal") & (~df["modsec_detected"])]

@@ -60,13 +60,23 @@ print(f"고유 unique_id: {len(error_df)}개")
 # URI 디코딩
 sent_df["path_decoded"] = sent_df["path"].apply(lambda x: unquote(str(x)))
 
+# 상태코드 기반 차단여부 결정
+sent_df["modsec_blocked"] = sent_df["status_code"] == 403
+sent_df["modsec_detected"] = sent_df["status_code"] == 403
+
 # 매칭
 merged = sent_df.merge(error_df, left_on="path_decoded", right_on="uri", how="left")
 
 # ★ 중복 제거: request_id 기준으로 첫 번째만 유지
 print(f"merge 전: {len(merged)}개")
+merged = merged.sort_values(
+    by=["request_id", "modsec_blocked"], ascending=[True, False]
+)
 merged = merged.drop_duplicates(subset=["request_id"], keep="first")
 print(f"중복 제거 후: {len(merged)}개")
+
+merged.loc[~merged["modsec_detected"], "matched_rule_ids"] = ""
+merged.loc[~merged["modsec_detected"], "rule_count"] = 0
 
 merged["modsec_detected"] = merged["modsec_detected"].fillna(False).astype(bool)
 merged["modsec_blocked"] = merged["modsec_blocked"].fillna(False).astype(bool)
