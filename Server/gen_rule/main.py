@@ -3,14 +3,9 @@ import json
 import re
 import psycopg2
 from psycopg2 import sql
-from dotenv import load_dotenv
 
-# 분리된 파일 import
-from gpt_generator import generate_modsec_rule
-
-load_dotenv()
-
-# ===== 설정 =====
+RULE_FILE_PATH = os.getenv("RULE_FILE_PATH", "rules/custom_rules.conf")
+# Prisma 전용 파라미터(schema, pgbouncer, connection_limit)는 절대 넣지 말 것!
 DEFAULT_DB_URL = "postgresql://postgres.nqpshpimhofnjxlcepop:luckycookiedb123@aws-1-ap-northeast-2.pooler.supabase.com:6543/postgres?sslmode=require"
 
 
