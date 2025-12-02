@@ -1,4 +1,4 @@
-// sessionizing.js (Idempotent / ESM)
+// sessionizing.js (Idempotent / ESM, schema.prisma 기반 최신 버전)
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
 import UAParser from 'ua-parser-js';
@@ -103,7 +103,6 @@ async function run() {
   // key = remote_host + agent_group
   const active = new Map();
   let batchNo = 0;
-  let lastId = 0;
 
   async function flushSession(key) {
     const s = active.get(key);
@@ -120,15 +119,20 @@ async function run() {
       samples: Array.from(s.samples).slice(0, 50),
     };
 
-    // 분류기에 보낼 요청 배열
-    const aiRequests = Array.from(s.samples).map(txt => ({
-      request_http_method: 'GET',
-      request_http_request: (txt.split(' ')[1] || '/'),
-      request_body: '',
+    // 분류기에 보낼 요청 배열 (실제 method/uri/body 기반)
+    const aiRequests = s.rawLogs.map((r) => ({
+      request_http_method: r.method || '',
+      request_http_request: r.uri || '/',
+      request_body: r.request_body || '',
       user_agent: s.user_agent || ''
     }));
 
-    // 가드 없이 항상 분류기 호출
+    if (aiRequests.length === 0) {
+      // 비어있는 세션은 그냥 버림
+      active.delete(key);
+      return;
+    }
+
     const res = await classifySession(aiRequests, summary);
     const label = res.label;
     const confidence = res.confidence;
@@ -178,7 +182,8 @@ async function run() {
   while (true) {
     batchNo += 1;
 
-    // 차단(실제 disruptive) 로그 제외 + 시간/ID 순으로 읽기
+    // ➜ 크래시 내성을 위해 lastId 조건 제거
+    // "아직 세션 할당 안 된 + 비차단(non-disruptive)" 로그만 매번 가장 오래된 것부터 처리
     const rows = await prisma.$queryRaw`
       SELECT
         r.id,
@@ -190,10 +195,10 @@ async function run() {
         r.uri,
         r.request_body,
         r.matched_rules,
-        r.audit_summary
+        r.audit_summary,
+        r.full_log
       FROM "RawLog" r
       WHERE r."sessionId" IS NULL
-        AND r.id > ${lastId}
         AND NOT (
           -- ① 확정: transaction.interruption 존재 → 실제 차단
           COALESCE(r.full_log->'transaction', '{}'::jsonb) ? 'interruption'
@@ -239,6 +244,7 @@ async function run() {
           samples: new Set(),
           preview: [],
           rawLogIds: [],
+          rawLogs: [],
         };
         active.set(key, s);
       }
@@ -260,6 +266,7 @@ async function run() {
           samples: new Set(),
           preview: [],
           rawLogIds: [],
+          rawLogs: [],
         };
         active.set(key, s);
       }
@@ -273,7 +280,11 @@ async function run() {
       const snippet = `${r.method || ''} ${r.uri || ''} ${(r.request_body || '').slice(0, 200)}`.trim();
       if (snippet) s.samples.add(snippet);
       s.rawLogIds.push(r.id);
-
+      s.rawLogs.push({
+        method: r.method,
+        uri: r.uri,
+        request_body: r.request_body,
+      });
     }
 
     // 배치 경계에서 닫힌 세션 flush
@@ -286,8 +297,9 @@ async function run() {
       }
     }
 
-    lastId = rows[rows.length - 1].id;
-    console.log(`[*] batch=${batchNo}, processed+=${rows.length}, lastId=${lastId}, active=${active.size}`);
+    console.log(
+      `[*] batch=${batchNo}, processed+=${rows.length}, active=${active.size}`
+    );
   }
 
   // 남은 세션 전부 flush

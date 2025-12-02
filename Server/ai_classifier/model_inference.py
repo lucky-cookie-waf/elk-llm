@@ -30,22 +30,34 @@ class MistralClassifier:
         return True
 
     # ===== 내부 유틸 =====
-    def _call_hf_endpoint(self, session_text: str) -> Dict[str, Any]:
+    def _call_hf_endpoint(self, prompt: str) -> Dict[str, Any]:
         """
         HF Inference Endpoint 호출.
         Endpoint 타입(text-generation / chat-completions 등)에 따라
         응답 구조가 달라질 수 있으므로 최대한 범용적으로 파싱.
+        prompt: 이미 프롬프트 형식으로 구성된 문자열
         """
         payload = {
-            "inputs": session_text
+            "inputs": prompt,
+            "parameters": {
+                # 설명이 끊기지 않도록 토큰 수 여유 있게
+                "max_new_tokens": 128,
+                "temperature": 0.1,
+                "do_sample": False,
+            },
         }
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
-        resp = requests.post(self.endpoint, headers=headers, data=json.dumps(payload), timeout=120)
+        resp = requests.post(
+            self.endpoint,
+            headers=headers,
+            data=json.dumps(payload),
+            timeout=120,
+        )
 
         if resp.status_code != 200:
             # 에러일 경우 그대로 텍스트를 넘겨서 상위에서 처리
@@ -102,99 +114,141 @@ class MistralClassifier:
         # 4) 그 외는 문자열 변환
         return str(data)
 
-    def _derive_classification(self, output: str) -> str:
+    def _split_label_and_explanation(self, output: str) -> (str, str):
         """
-        HF 모델이 생성한 텍스트(raw_response)를 보고
-        SQL / PATH / CODE / NORMAL / ATTACK 중 하나로 classification 문자열을 설정.
-
-        이 문자열에 따라 sessionizing.js의 toSessionLabelEnum이 동작:
-          - 'sql'  포함 → SQL_INJECTION
-          - 'code' 포함 → CODE_INJECTION
-          - 'path' 또는 'traversal' 포함 → PATH_TRAVERSAL
-          - 'normal' 또는 'benign' 포함 → NORMAL
-          - 그 외 → MALICIOUS
+        모델 출력에서
+        - 첫 번째 비어있지 않은 줄을 라벨 후보
+        - 나머지 줄을 설명(explanation)으로 분리
         """
-        text = output.lower()
+        lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+        if not lines:
+            return "", ""
+        label_line = lines[0]
+        explanation = "\n".join(lines[1:]).strip()
+        return label_line, explanation
 
-        # SQL Injection 징후
-        sql_like = (
-            "sql injection" in text
-            or "sqli" in text
-            or "union select" in text
-            or "or 1=1" in text
-            or "or 1 = 1" in text
-        )
+    def _derive_classification(self, label_text: str, explanation: str) -> str:
+        """
+        모델이 생성한 출력 중
+        - 첫 줄(label_text)을 우선적으로 보고
+        - 설명(explanation)까지 합쳐서 SQL / PATH / CODE / NORMAL / ATTACK 중 하나로 매핑.
 
-        # Path Traversal 징후
-        path_like = (
-            "path traversal" in text
-            or "directory traversal" in text
-            or "../" in text
-            or "..\\" in text
-        )
+        최종 라벨 셋:
+          - "SQL injection"
+          - "Code injection"
+          - "Path traversal"
+          - "Normal"
+          - "Attack"  (Normal은 아닌데 공격/악성 뉘앙스가 강할 때 fallback)
+        """
+        label = (label_text or "").strip().lower()
+        expl = (explanation or "").strip().lower()
+        combined = (label + "\n" + expl).strip()
 
-        # XSS / Code injection 징후
-        code_like = (
-            "xss" in text
-            or "cross-site scripting" in text
-            or "<script" in text
-            or "javascript:" in text
-            or "code injection" in text
-        )
+        # 1) 먼저 라벨 줄만 보고 직접 매핑 시도
+        if "sql" in label:
+            return "SQL injection"
+        if "path" in label or "traversal" in label:
+            return "Path traversal"
+        if "code" in label or "xss" in label:
+            return "Code injection"
+        if "normal" in label or "benign" in label:
+            return "Normal"
 
-        # 정상/베나인 언급
+        # 2) 라벨이 애매하면 전체 텍스트(combined)를 기준으로 추가 판별
+        text = combined
+
         normal_like = (
             "normal" in text
             or "benign" in text
             or "no malicious activity" in text
             or "not malicious" in text
             or "no attack" in text
+            or "false positive" in text
         )
 
-        # 1순위: 구체적인 공격 타입
-        if sql_like:
-            return "SQL injection"
-        if path_like:
-            return "Path traversal"
-        if code_like:
-            return "Code injection"
+        attack_like = (
+            "attack" in text
+            or "malicious" in text
+            or "suspicious" in text
+            or "exploit" in text
+            or "payload" in text
+            or "injection" in text
+            or "sql injection" in text
+            or "sqli" in text
+            or "xss" in text
+            or "<script" in text
+            or "path traversal" in text
+            or "../" in text
+            or "..\\" in text
+        )
 
-        # 2순위: 명시적으로 정상이라고 언급한 경우
+        # Normal 뉘앙스가 있으면 우선 Normal
         if normal_like:
-            return "Normal (benign)"
+            return "Normal"
 
-        # 3순위: 공격/악성이라는 키워드만 있을 때
-        if "attack" in text or "malicious" in text or "suspicious" in text:
+        # Normal은 절대 아닌데, 공격/악성 뉘앙스만 강한 경우 → Attack fallback
+        if attack_like:
             return "Attack"
 
-        # 4순위: 아무 흔적도 못 찾으면 일단 Normal 취급 (원하면 'Attack'으로 바꿀 수 있음)
+        # 아무 단서가 없으면 일단 Normal로 취급
         return "Normal"
 
     # ===== 외부에서 사용하는 메인 메서드 =====
     def predict(self, session_text: str) -> Dict[str, Any]:
         """
-        session_text (build_session_text로 만든 세션 요약)를 HF Endpoint에 보내고,
-        classification / confidence / raw_response를 반환.
+        session_text (build_session_text로 만든 세션 요약)를 기반으로
+        HF Endpoint에 프롬프트를 전달하고,
+        - classification:  "SQL injection" / "Code injection" / "Path traversal" / "Normal" / "Attack"
+        - confidence:     "high" (추후 조건부 조정 가능)
+        - raw_response:   모델의 "설명만" (로그/라벨 제외)
+        을 반환.
         """
+
+        # 1) 프롬프트 구성
+        #   - 1번째 줄: 라벨 (Normal / Code Injection / Path Traversal / SQL Injection 중 하나만)
+        #   - 2번째 줄부터: 설명
+        #   - HTTP 로그는 답변에 다시 쓰지 말 것
+        prompt = f"""You are a web application firewall (WAF) analyst.
+
+Analyze the following HTTP request log and classify it into ONE of the following labels:
+- Normal
+- Code Injection
+- Path Traversal
+- SQL Injection
+
+Output format:
+1. On the FIRST line, write ONLY the final label (exactly one of: Normal, Code Injection, Path Traversal, SQL Injection).
+2. From the SECOND line onward, briefly explain your reasoning in English.
+3. Do NOT repeat the original HTTP request log in your answer.
+
+HTTP request log:
+{session_text}
+
+Answer:
+"""
+
         try:
-            hf_resp = self._call_hf_endpoint(session_text)
-            output = self._extract_output_text(hf_resp)
+            hf_resp = self._call_hf_endpoint(prompt)
+            output = self._extract_output_text(hf_resp).strip()
         except Exception as e:
             # HF 쪽 오류 → Error 플래그로 반환
             return {
                 "classification": "Error",
                 "confidence": "low",
-                "raw_response": f"[HF_ERROR] {e}"
+                "raw_response": f"[HF_ERROR] {e}",
             }
 
-        # raw_response 기반으로 공격 유형/정상 여부 결정
-        classification = self._derive_classification(output)
+        # 2) 출력에서 라벨 줄 / 설명 분리
+        label_line, explanation = self._split_label_and_explanation(output)
 
-        # 일단 heuristic 성공 기준으로 high 고정 (나중에 조건식으로 조절 가능)
+        # 3) 라벨 + 설명 텍스트를 기반으로 최종 classification 결정
+        classification = self._derive_classification(label_line, explanation)
+
+        # 4) 설명만 ai_raw(raw_response)에 담기 (로그/라벨은 제외)
         confidence = "high"
 
         return {
-            "classification": classification,  # ex) "SQL injection", "Path traversal", "Code injection", "Normal (benign)", "Attack"
+            "classification": classification,
             "confidence": confidence,
-            "raw_response": output
+            "raw_response": explanation,
         }

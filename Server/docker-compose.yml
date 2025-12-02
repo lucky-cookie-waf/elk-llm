@@ -54,8 +54,6 @@ services:
       dockerfile: Dockerfile
     container_name: flask-app
     restart: always
-    ports:
-      - "5000:5000"
     env_file:
       - ./flask_app/.env
     networks:
@@ -140,9 +138,8 @@ services:
     restart: "no"
     env_file:
       - ./gen_rule/.env
-      - ./.env.shared
     #environment:
-      
+      #DATABASE_URL: postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs
     networks:
       - web-network
     #depends_on:
