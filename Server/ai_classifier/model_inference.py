@@ -2,6 +2,7 @@
 import os
 import json
 import requests
+import re
 from typing import Any, Dict
 
 
@@ -40,9 +41,9 @@ class MistralClassifier:
         payload = {
             "inputs": prompt,
             "parameters": {
-                # 설명이 끊기지 않도록 토큰 수 여유 있게
-                "max_new_tokens": 128,
-                "temperature": 0.1,
+                "max_new_tokens": 16,
+                "temperature": 0.01,
+                "return_full_text": False,
                 "do_sample": False,
             },
         }
@@ -52,203 +53,105 @@ class MistralClassifier:
             "Content-Type": "application/json",
         }
 
-        resp = requests.post(
-            self.endpoint,
-            headers=headers,
-            data=json.dumps(payload),
-            timeout=120,
-        )
-
-        if resp.status_code != 200:
-            # 에러일 경우 그대로 텍스트를 넘겨서 상위에서 처리
-            raise RuntimeError(f"HF endpoint HTTP {resp.status_code}: {resp.text}")
-
         try:
+            resp = requests.post(
+                self.endpoint, headers=headers, data=json.dumps(payload), timeout=30
+            )
+
+            if resp.status_code != 200:
+                raise RuntimeError(f"HF error {resp.status_code}: {resp.text}")
+
             return resp.json()
-        except Exception:
-            # JSON 파싱 실패 시 raw text 그대로 넘김
-            return {"raw": resp.text}
+
+        except Exception as e:
+            # 네트워크 타임아웃 등
+            return {"error": str(e)}
 
     def _extract_output_text(self, data: Any) -> str:
         """
-        HF Endpoint 응답에서 사람이 읽을 수 있는 텍스트를 최대한 뽑아냄.
-        - text-generation-inference: [{ "generated_text": "..." }]
-        - 일반 pipeline: { "generated_text": "..." } 또는 "..." 등
-        - chat/completions 스타일: { "choices": [ { "message": { "content": "..." } } ] }
+        HF Endpoint 응답에서 텍스트만 추출
         """
-        # 1) 리스트 형태 (HF text-generation-inference가 흔히 이 형태)
+        if isinstance(data, dict) and "error" in data:
+            return "Error"
+
         if isinstance(data, list) and data:
             first = data[0]
             if isinstance(first, dict):
-                if "generated_text" in first:
-                    return str(first["generated_text"])
-                if "text" in first:
-                    return str(first["text"])
+                return first.get("generated_text", "")
             return str(first)
 
-        # 2) 딕셔너리 형태
         if isinstance(data, dict):
-            if "generated_text" in data:
-                return str(data["generated_text"])
-            # OpenAI/chat 스타일
-            if "choices" in data and isinstance(data["choices"], list) and data["choices"]:
-                choice = data["choices"][0]
-                # chat.completions 형태
-                if isinstance(choice, dict):
-                    if "message" in choice and isinstance(choice["message"], dict):
-                        content = choice["message"].get("content")
-                        if content:
-                            return str(content)
-                    # text-completion 형태
-                    if "text" in choice:
-                        return str(choice["text"])
-            # raw 키가 있으면 그걸 사용
-            if "raw" in data:
-                return str(data["raw"])
-            return json.dumps(data, ensure_ascii=False)
+            return data.get("generated_text", "")
 
-        # 3) 문자열 그대로
-        if isinstance(data, str):
-            return data
-
-        # 4) 그 외는 문자열 변환
         return str(data)
 
-    def _split_label_and_explanation(self, output: str) -> (str, str):
+    def _derive_classification(self, output: str) -> str:
         """
-        모델 출력에서
-        - 첫 번째 비어있지 않은 줄을 라벨 후보
-        - 나머지 줄을 설명(explanation)으로 분리
+        모델의 응답(output)을 분석하여 (Classification, Confidence) 반환.
+        학습된 4개 클래스 이외의 값이 나오면 Low Confidence로 처리.
         """
-        lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
-        if not lines:
-            return "", ""
-        label_line = lines[0]
-        explanation = "\n".join(lines[1:]).strip()
-        return label_line, explanation
+        # 1. 정규화 (특수문자 제거, 대문자 변환)
+        clean_text = re.sub(r"[^a-zA-Z\s]", "", output).strip().upper()
+        clean_text = " ".join(clean_text.split())
 
-    def _derive_classification(self, label_text: str, explanation: str) -> str:
-        """
-        모델이 생성한 출력 중
-        - 첫 줄(label_text)을 우선적으로 보고
-        - 설명(explanation)까지 합쳐서 SQL / PATH / CODE / NORMAL / ATTACK 중 하나로 매핑.
+        # 2. 정확한 라벨 매칭 (학습 데이터 기준)
+        if "SQL INJECTION" in clean_text:
+            return "SQL Injection", "high"
 
-        최종 라벨 셋:
-          - "SQL injection"
-          - "Code injection"
-          - "Path traversal"
-          - "Normal"
-          - "Attack"  (Normal은 아닌데 공격/악성 뉘앙스가 강할 때 fallback)
-        """
-        label = (label_text or "").strip().lower()
-        expl = (explanation or "").strip().lower()
-        combined = (label + "\n" + expl).strip()
+        if "CODE INJECTION" in clean_text:
+            return "Code Injection", "high"
 
-        # 1) 먼저 라벨 줄만 보고 직접 매핑 시도
-        if "sql" in label:
-            return "SQL injection"
-        if "path" in label or "traversal" in label:
-            return "Path traversal"
-        if "code" in label or "xss" in label:
-            return "Code injection"
-        if "normal" in label or "benign" in label:
-            return "Normal"
+        if "PATH TRAVERSAL" in clean_text:
+            return "Path Traversal", "high"
 
-        # 2) 라벨이 애매하면 전체 텍스트(combined)를 기준으로 추가 판별
-        text = combined
+        # Normal 또는 Benign
+        if "NORMAL" in clean_text or "BENIGN" in clean_text:
+            return "Normal (benign)", "high"
 
-        normal_like = (
-            "normal" in text
-            or "benign" in text
-            or "no malicious activity" in text
-            or "not malicious" in text
-            or "no attack" in text
-            or "false positive" in text
-        )
+        # 3. 예외 처리 (모델이 딴소리 함)
+        if "ERROR" in clean_text:
+            return "Normal", "low"  # 에러 시 Fail-open
 
-        attack_like = (
-            "attack" in text
-            or "malicious" in text
-            or "suspicious" in text
-            or "exploit" in text
-            or "payload" in text
-            or "injection" in text
-            or "sql injection" in text
-            or "sqli" in text
-            or "xss" in text
-            or "<script" in text
-            or "path traversal" in text
-            or "../" in text
-            or "..\\" in text
-        )
+        # 4. 공격 뉘앙스는 있으나 라벨이 정확하지 않음
+        if "ATTACK" in clean_text or "MALICIOUS" in clean_text:
+            return "Attack", "medium"  # 찜찜하니까 Attack으로 분류하되 신뢰도는 medium
 
-        # Normal 뉘앙스가 있으면 우선 Normal
-        if normal_like:
-            return "Normal"
-
-        # Normal은 절대 아닌데, 공격/악성 뉘앙스만 강한 경우 → Attack fallback
-        if attack_like:
-            return "Attack"
-
-        # 아무 단서가 없으면 일단 Normal로 취급
-        return "Normal"
+        # 5. 알 수 없음 -> Normal로 처리 (서비스 장애 방지)
+        return "Normal", "low"
 
     # ===== 외부에서 사용하는 메인 메서드 =====
     def predict(self, session_text: str) -> Dict[str, Any]:
         """
-        session_text (build_session_text로 만든 세션 요약)를 기반으로
-        HF Endpoint에 프롬프트를 전달하고,
-        - classification:  "SQL injection" / "Code injection" / "Path traversal" / "Normal" / "Attack"
-        - confidence:     "high" (추후 조건부 조정 가능)
-        - raw_response:   모델의 "설명만" (로그/라벨 제외)
-        을 반환.
+        학습(Train) 코드와 토씨 하나 안 틀리고 똑같은 프롬프트 사용
         """
 
-        # 1) 프롬프트 구성
-        #   - 1번째 줄: 라벨 (Normal / Code Injection / Path Traversal / SQL Injection 중 하나만)
-        #   - 2번째 줄부터: 설명
-        #   - HTTP 로그는 답변에 다시 쓰지 말 것
-        prompt = f"""You are a web application firewall (WAF) analyst.
+        # 파인튜닝 코드의 WAFSessionDataset 클래스 __getitem__ 메서드에 있던 그 프롬프트
+        prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
+웹 방화벽 세션을 분석하여 공격 유형을 분류하세요. 가능한 분류: Normal, SQL Injection, Code Injection, Path Traversal<|eot_id|>
 
-Analyze the following HTTP request log and classify it into ONE of the following labels:
-- Normal
-- Code Injection
-- Path Traversal
-- SQL Injection
+<|start_header_id|>user<|end_header_id|>
+세션 정보:
+{session_text}<|eot_id|>
 
-Output format:
-1. On the FIRST line, write ONLY the final label (exactly one of: Normal, Code Injection, Path Traversal, SQL Injection).
-2. From the SECOND line onward, briefly explain your reasoning in English.
-3. Do NOT repeat the original HTTP request log in your answer.
-
-HTTP request log:
-{session_text}
-
-Answer:
+<|start_header_id|>assistant<|end_header_id|>
 """
-
         try:
             hf_resp = self._call_hf_endpoint(prompt)
-            output = self._extract_output_text(hf_resp).strip()
-        except Exception as e:
-            # HF 쪽 오류 → Error 플래그로 반환
+            output = self._extract_output_text(hf_resp)
+
+            classification, confidence = self._derive_classification(output)
+
+            # 설명은 따로 없으므로 raw_response에는 모델이 뱉은 라벨 원본을 저장
             return {
-                "classification": "Error",
-                "confidence": "low",
-                "raw_response": f"[HF_ERROR] {e}",
+                "classification": classification,
+                "confidence": confidence,
+                "raw_response": output.strip(),
             }
 
-        # 2) 출력에서 라벨 줄 / 설명 분리
-        label_line, explanation = self._split_label_and_explanation(output)
-
-        # 3) 라벨 + 설명 텍스트를 기반으로 최종 classification 결정
-        classification = self._derive_classification(label_line, explanation)
-
-        # 4) 설명만 ai_raw(raw_response)에 담기 (로그/라벨은 제외)
-        confidence = "high"
-
-        return {
-            "classification": classification,
-            "confidence": confidence,
-            "raw_response": explanation,
-        }
+        except Exception as e:
+            # 최후의 안전장치 (Fail-open)
+            return {
+                "classification": "Normal",
+                "confidence": "low",
+                "raw_response": f"System Error: {e}",
+            }
