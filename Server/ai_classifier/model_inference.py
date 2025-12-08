@@ -120,12 +120,19 @@ class MistralClassifier:
         return "Normal", "low"
 
     # ===== 외부에서 사용하는 메인 메서드 =====
-    def predict(self, session_text: str) -> Dict[str, Any]:
+    def predict(self, method: str, path: str, body: str = "") -> Dict[str, Any]:
         """
-        학습(Train) 코드와 토씨 하나 안 틀리고 똑같은 프롬프트 사용
+        재학습된 모델의 포맷(영어/Standard)에 맞춰 문자열 조립
+        입력 예: method="GET", path="/login", body="id=1"
+        결과 예: "GET /login\nBody: id=1"
         """
 
-        # 파인튜닝 코드의 WAFSessionDataset 클래스 __getitem__ 메서드에 있던 그 프롬프트
+        session_text = f"{method} {path}"
+
+        if body and str(body).strip() not in ["nan", "", "None", "null"]:
+            session_text += f"\nBody: {str(body)[:100]}"
+
+        # 파인튜닝 코드의 WAFSessionDataset 클래스 __getitem__ 메서드에 있던 프롬프트
         prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 웹 방화벽 세션을 분석하여 공격 유형을 분류하세요. 가능한 분류: Normal, SQL Injection, Code Injection, Path Traversal<|eot_id|>
 
