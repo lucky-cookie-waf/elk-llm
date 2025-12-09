@@ -60,28 +60,56 @@ print(f"고유 unique_id: {len(error_df)}개")
 # URI 디코딩
 sent_df["path_decoded"] = sent_df["path"].apply(lambda x: unquote(str(x)))
 
-# 상태코드 기반 차단여부 결정
+# 상태코드 기반 차단여부 결정 (원래 로직 그대로)
 sent_df["modsec_blocked"] = sent_df["status_code"] == 403
 sent_df["modsec_detected"] = sent_df["status_code"] == 403
 
-# 매칭
+# 매칭 (원래처럼 path_decoded <-> uri)
 merged = sent_df.merge(error_df, left_on="path_decoded", right_on="uri", how="left")
+print(f"merge 전: {len(merged)}개")
+
+# 🔧 1) merge 후 생긴 _x / _y 컬럼 정리
+# sent_df 쪽 modsec_* 값을 기준으로 canonical 컬럼을 다시 만든다.
+if "modsec_blocked_x" in merged.columns:
+    merged["modsec_blocked"] = merged["modsec_blocked_x"]
+elif "modsec_blocked" not in merged.columns:
+    merged["modsec_blocked"] = False
+
+if "modsec_detected_x" in merged.columns:
+    merged["modsec_detected"] = merged["modsec_detected_x"]
+elif "modsec_detected" not in merged.columns:
+    merged["modsec_detected"] = False
+
+# 🔧 2) matched_rule_ids, rule_count 기본값 채우기
+if "matched_rule_ids" not in merged.columns:
+    merged["matched_rule_ids"] = ""
+merged["matched_rule_ids"] = merged["matched_rule_ids"].fillna("")
+
+if "rule_count" not in merged.columns:
+    merged["rule_count"] = 0
+merged["rule_count"] = merged["rule_count"].fillna(0).astype(int)
+
+# (원하면 보기 깔끔하게 _x/_y 컬럼들 삭제해도 됨 - 선택)
+for col in list(merged.columns):
+    if col.endswith("_x") or col.endswith("_y"):
+        # 분석에 필요 없으면 드롭
+        if col not in ["request_id_x", "request_id_y"]:  # 혹시라도 있을 경우
+            merged.drop(columns=[col], inplace=True, errors="ignore")
 
 # ★ 중복 제거: request_id 기준으로 첫 번째만 유지
-print(f"merge 전: {len(merged)}개")
 merged = merged.sort_values(
     by=["request_id", "modsec_blocked"], ascending=[True, False]
 )
 merged = merged.drop_duplicates(subset=["request_id"], keep="first")
 print(f"중복 제거 후: {len(merged)}개")
 
+# 원래 로직 유지: 탐지 안 된 요청은 rule id/count 비우기
 merged.loc[~merged["modsec_detected"], "matched_rule_ids"] = ""
 merged.loc[~merged["modsec_detected"], "rule_count"] = 0
 
-merged["modsec_detected"] = merged["modsec_detected"].fillna(False).astype(bool)
-merged["modsec_blocked"] = merged["modsec_blocked"].fillna(False).astype(bool)
-merged["matched_rule_ids"] = merged["matched_rule_ids"].fillna("")
-merged["rule_count"] = merged["rule_count"].fillna(0).astype(int)
+merged["modsec_detected"] = merged["modsec_detected"].astype(bool)
+merged["modsec_blocked"] = merged["modsec_blocked"].astype(bool)
+merged["rule_count"] = merged["rule_count"].astype(int)
 
 # 저장
 output_cols = [

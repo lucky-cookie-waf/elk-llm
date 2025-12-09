@@ -19,9 +19,7 @@ for idx, row in tqdm(df.iterrows(), total=len(df)):
                 "request_http_method": row["method"],
                 "request_http_request": row["path"],
                 "request_body": "",
-                "user_agent": (
-                    str(row["user_agent"]) if pd.notna(row["user_agent"]) else ""
-                ),
+                "user_agent": (str(row["user_agent"]) if pd.notna(row["user_agent"]) else "")
             }
         ]
     }
@@ -32,14 +30,11 @@ for idx, row in tqdm(df.iterrows(), total=len(df)):
         if response.status_code == 200:
             data = response.json()
 
-            if data.get("success", False):
-                ai_classification = data.get("classification", "Unknown")
-                ai_confidence = data.get("confidence", "low")
-                ai_raw = data.get("raw_response", "")
-            else:
-                ai_classification = "Error"
-                ai_confidence = "low"
-                ai_raw = data.get("error", "Unknown error")
+            # success 검사 제거 — JSON만 오면 정상 처리
+            ai_classification = data.get("classification", "Unknown")
+            ai_confidence = data.get("confidence", "low")
+            ai_raw = data.get("raw_response", data)
+
         else:
             ai_classification = "Error"
             ai_confidence = "low"
@@ -49,21 +44,21 @@ for idx, row in tqdm(df.iterrows(), total=len(df)):
         ai_classification = "Error"
         ai_confidence = "low"
         ai_raw = "Timeout (30s)"
+
     except Exception as e:
         ai_classification = "Error"
         ai_confidence = "low"
-        ai_raw = str(e)[:100]
+        ai_raw = str(e)[:200]
 
-    results.append(
-        {
-            "request_id": row["request_id"],
-            "ai_classification": ai_classification,
-            "ai_confidence": ai_confidence,
-            "ai_raw": ai_raw,
-        }
-    )
+    results.append({
+        "request_id": row["request_id"],
+        "ai_classification": ai_classification,
+        "ai_confidence": ai_confidence,
+        "ai_raw": ai_raw,
+    })
 
-    time.sleep(0.1)
+    # rate limit
+    time.sleep(0.05)
 
     if (idx + 1) % 50 == 0:
         errors = sum(1 for r in results if r["ai_classification"] == "Error")
@@ -75,7 +70,7 @@ merged = df.merge(ai_df, on="request_id", how="left")
 
 # AI 탐지 여부
 merged["ai_detected"] = merged["ai_classification"].apply(
-    lambda x: str(x).strip() not in ["Normal", "Unknown", "Error", ""]
+    lambda x: str(x).strip().lower() not in ["normal", "unknown", "error", ""]
 )
 
 merged.to_csv(OUTPUT, index=False)
