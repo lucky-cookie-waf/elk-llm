@@ -121,26 +121,20 @@ class MistralClassifier:
 
     # ===== 외부에서 사용하는 메인 메서드 =====
     def predict(self, method: str, path: str, body: str = "") -> Dict[str, Any]:
-        """
-        재학습된 모델의 포맷(Mistral)에 맞춰 문자열 조립
-        """
-        # 파인튜닝 형식과 일치
         session_text = f"요청1: {method} {path}"
 
         if body and str(body).strip() not in ["nan", "", "None", "null"]:
             session_text += f"\n본문: {str(body)[:100]}"
 
-        system_msg = """당신은 엄격한 웹 방화벽 보안 분석가입니다.
-세션을 분석하여 명확한 공격 패턴이 있는 경우에만 공격으로 분류하세요.
-의심스럽거나 불확실한 경우 반드시 Normal로 분류하세요.
+        system_msg = """당신은 보수적인 웹 방화벽 보안 분석가입니다.
+명확한 공격 패턴이 있을 때만 공격으로 분류하세요.
+의심스럽거나 불확실하면 Normal로 분류하세요.
 
 분류 기준:
 - Normal: 정상적인 웹 브라우징 활동
 - SQL Injection: 명백한 SQL 구문 삽입 (UNION SELECT, OR 1=1, DROP TABLE 등)
 - Code Injection: 명백한 코드 실행 시도 (eval, exec, system, <?php 등)
-- Path Traversal: 명백한 디렉토리 탐색 (../, ../../etc/passwd 등)
-
-중요: 명확한 증거가 없으면 Normal로 분류하세요."""
+- Path Traversal: 명백한 디렉토리 탐색 (../, ../../etc/passwd 등)"""
 
         user_msg = f"""세션 정보:
 {session_text}
