@@ -122,33 +122,39 @@ class MistralClassifier:
     # ===== 외부에서 사용하는 메인 메서드 =====
     def predict(self, method: str, path: str, body: str = "") -> Dict[str, Any]:
         """
-        재학습된 모델의 포맷(영어/Standard)에 맞춰 문자열 조립
-        입력 예: method="GET", path="/login", body="id=1"
-        결과 예: "GET /login\nBody: id=1"
+        재학습된 모델의 포맷(Mistral)에 맞춰 문자열 조립
         """
-
-        session_text = f"{method} {path}"
+        # 파인튜닝 형식과 일치
+        session_text = f"요청1: {method} {path}"
 
         if body and str(body).strip() not in ["nan", "", "None", "null"]:
-            session_text += f"\nBody: {str(body)[:100]}"
+            session_text += f"\n본문: {str(body)[:100]}"
 
-        # 파인튜닝 코드의 WAFSessionDataset 클래스 __getitem__ 메서드에 있던 프롬프트
-        prompt = f"""<|begin_of_text|><|start_header_id|>system<|end_header_id|>
-웹 방화벽 세션을 분석하여 공격 유형을 분류하세요. 가능한 분류: Normal, SQL Injection, Code Injection, Path Traversal<|eot_id|>
+        system_msg = """당신은 엄격한 웹 방화벽 보안 분석가입니다.
+세션을 분석하여 명확한 공격 패턴이 있는 경우에만 공격으로 분류하세요.
+의심스럽거나 불확실한 경우 반드시 Normal로 분류하세요.
 
-<|start_header_id|>user<|end_header_id|>
-세션 정보:
-{session_text}<|eot_id|>
+분류 기준:
+- Normal: 정상적인 웹 브라우징 활동
+- SQL Injection: 명백한 SQL 구문 삽입 (UNION SELECT, OR 1=1, DROP TABLE 등)
+- Code Injection: 명백한 코드 실행 시도 (eval, exec, system, <?php 등)
+- Path Traversal: 명백한 디렉토리 탐색 (../, ../../etc/passwd 등)
 
-<|start_header_id|>assistant<|end_header_id|>
-"""
+중요: 명확한 증거가 없으면 Normal로 분류하세요."""
+
+        user_msg = f"""세션 정보:
+{session_text}
+
+위 세션의 분류를 다음 중 하나로만 답변하세요:
+Normal, SQL Injection, Code Injection, Path Traversal"""
+
+        prompt = f"<s>[INST] {system_msg}\n\n{user_msg} [/INST]"
+
         try:
             hf_resp = self._call_hf_endpoint(prompt)
             output = self._extract_output_text(hf_resp)
-
             classification, confidence = self._derive_classification(output)
 
-            # 설명은 따로 없으므로 raw_response에는 모델이 뱉은 라벨 원본을 저장
             return {
                 "classification": classification,
                 "confidence": confidence,
@@ -156,7 +162,6 @@ class MistralClassifier:
             }
 
         except Exception as e:
-            # 최후의 안전장치 (Fail-open)
             return {
                 "classification": "Normal",
                 "confidence": "low",
