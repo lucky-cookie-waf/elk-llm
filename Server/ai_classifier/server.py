@@ -116,7 +116,7 @@ async def classify(req: AIRequest):
 
     # 하나씩 처리 (LLM concurrency 제한)
     async with lock:
-        result = clf.predict(session_text)
+        result = clf.predict("SESSION", session_text, "")
 
     # model_inference.py가 반환하는 구조 그대로 사용
     classification = result.get("classification", "Normal")

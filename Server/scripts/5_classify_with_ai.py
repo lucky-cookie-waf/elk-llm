@@ -64,15 +64,32 @@ for idx, row in tqdm(df.iterrows(), total=len(df)):
         errors = sum(1 for r in results if r["ai_classification"] == "Error")
         print(f"\n진행: {idx + 1}/{len(df)}, 에러: {errors}개")
 
+# =======================
 # 병합
+# =======================
 ai_df = pd.DataFrame(results)
 merged = df.merge(ai_df, on="request_id", how="left")
 
-# AI 탐지 여부
-merged["ai_detected"] = merged["ai_classification"].apply(
-    lambda x: str(x).strip().lower() not in ["normal", "unknown", "error", ""]
+# =======================
+# ✅ AI 탐지 여부 정의 (수정된 부분)
+#    → 공격 라벨만 True 로 간주
+# =======================
+ATTACK_LABELS = {
+    "sql injection",
+    "code injection",
+    "path traversal",
+    "attack",   # 혹시 generic 라벨 쓸 경우 대비
+}
+
+merged["ai_detected"] = (
+    merged["ai_classification"]
+    .astype(str)
+    .str.strip()
+    .str.lower()
+    .isin(ATTACK_LABELS)
 )
 
+# 결과 저장
 merged.to_csv(OUTPUT, index=False)
 
 print(f"\n완료! {OUTPUT}")
