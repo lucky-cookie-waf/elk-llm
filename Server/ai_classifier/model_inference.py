@@ -124,7 +124,7 @@ class MistralClassifier:
         session_text = f"요청1: {method} {path}"
 
         if body and str(body).strip() not in ["nan", "", "None", "null"]:
-            session_text += f"\n본문: {str(body)[:100]}"
+            session_text += f"\n본문: {str(body)[:1500]}"
 
         system_msg = """당신은 보수적인 웹 방화벽 보안 분석가입니다.
 명확한 공격 패턴이 있을 때만 공격으로 분류하세요.

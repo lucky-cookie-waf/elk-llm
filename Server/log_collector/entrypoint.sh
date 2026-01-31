@@ -15,7 +15,7 @@ else
   esac
 fi
 
-# 필수 환경 확인 (Pooler 6543 URL이어야 함)
+# 필수 환경 확인
 if [ -z "${DATABASE_URL:-}" ]; then
   log "[fatal] DATABASE_URL is not set. Make sure .env.shared is loaded."
   exit 1
@@ -27,7 +27,6 @@ case "$DATABASE_URL" in
 esac
 
 # ===== (옵션) Prisma 마이그레이션 =====
-# 기본적으로 실행하지 않음. 필요 시 MIGRATE_ON_START=1 로 켜기
 if [ "${MIGRATE_ON_START:-0}" = "1" ]; then
   if command -v npx >/dev/null 2>&1; then
     SCHEMA_PATH="${PRISMA_SCHEMA_PATH:-prisma/schema.prisma}"
@@ -44,27 +43,33 @@ fi
 # 정상 종료시 자식 프로세스 정리
 trap 'log "[log_collector] stopping..."; kill 0 2>/dev/null || true; exit 0' TERM INT
 
+# ===== parser init (checkpoint 없으면 1회) =====
+CHECKPOINT_FILE="${PARSER_CHECKPOINT_FILE:-/app/log_collector/.parser_checkpoint}"
+if [ ! -f "$CHECKPOINT_FILE" ]; then
+  log "[parser] checkpoint not found -> init"
+  node /app/log_collector/parser.js init || true
+fi
+
 # ===== 파서 루프 (RawLog 적재) =====
 parser_loop() {
   log "[parser] loop start"
   while true; do
-    node /app/log_collector/parser.js || log "[parser] exited ($?)"
+    node /app/log_collector/parser.js run || log "[parser] exited ($?)"
     sleep 5
   done
 }
 
-# ===== 세션화 루프 (Sessionize) =====
+# ===== 단일로그 분류 루프 (Session 저장) =====
 session_loop() {
   log "[sessionizing] loop start"
   while true; do
     node /app/log_collector/sessionizing.js || log "[sessionizing] exited ($?)"
-    sleep 30
+    sleep 15
   done
 }
 
-# 하나는 백그라운드, 하나는 포그라운드로 실행
+# ✅ parser는 백그라운드, sessionizing은 포그라운드
 parser_loop &
 session_loop
 
-# 모든 잡이 끝날 때까지 대기
 wait

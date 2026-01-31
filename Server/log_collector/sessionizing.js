@@ -1,50 +1,52 @@
-// sessionizing.js (Idempotent / ESM, schema.prisma 기반 최신 버전)
+// sessionizing.js (Single-log classification / Idempotent / ESM) — only PASSed-by-ModSec -> classify
 import { PrismaClient } from '@prisma/client';
 import axios from 'axios';
-import UAParser from 'ua-parser-js';
 
 const prisma = new PrismaClient();
 
-// ===== 설정 =====
-const INACTIVITY_MINUTES = 30;
-const BATCH_SIZE = 1000;
+const BATCH_SIZE = Number(process.env.BATCH_SIZE || 1000);
 const CLASSIFIER_ENDPOINT =
   process.env.CLASSIFIER_ENDPOINT || 'http://ai_classifier:3002/api/classify';
 const DEBUG_CLASSIFIER = process.env.DEBUG_CLASSIFIER === '1';
-// 분류 API 타임아웃(ms) — 서버(INFER_TIMEOUT_MS)보다 조금 짧게 권장
 const CLASSIFIER_TIMEOUT_MS = Number(process.env.CLASSIFIER_TIMEOUT_MS || 120000);
 
-// ===== 유틸 =====
-function makeAgentGroup(uaString) {
-  try {
-    const parsed = new UAParser(uaString || '').getResult();
-    const os = (parsed.os?.name || 'Unknown').replace(/\s+/g, '');
-    const br = (parsed.browser?.name || 'Unknown').replace(/\s+/g, '');
-    return `${os}_${br}`;
-  } catch {
-    return 'Unknown_Unknown';
-  }
-}
+const MAX_BODY_CHARS = Number(process.env.MAX_BODY_CHARS || 300);
+const MAX_UA_CHARS = Number(process.env.MAX_UA_CHARS || 120);
 
+// ===== label/conf normalize (model_inference.py 호환) =====
 function toSessionLabelEnum(raw) {
   const s = String(raw || '').trim().toLowerCase();
+  if (s.startsWith('normal') || s.includes('benign')) return 'NORMAL';
   if (s.includes('sql')) return 'SQL_INJECTION';
   if (s.includes('code')) return 'CODE_INJECTION';
   if (s.includes('path') || s.includes('traversal')) return 'PATH_TRAVERSAL';
-  if (s.includes('normal') || s.includes('benign')) return 'NORMAL';
+  if (s === 'attack' || s.includes('malicious')) return 'MALICIOUS';
   return 'MALICIOUS';
 }
 
 function toConfidenceEnum(raw) {
   const s = String(raw || '').trim().toLowerCase();
   if (s === 'high') return 'HIGH';
+  if (s === 'medium') return 'LOW';
   if (s === 'low') return 'LOW';
   return null;
 }
 
-// (백업) 텍스트 휴리스틱
-function heuristicLabel(sampleTexts) {
-  const text = (sampleTexts || []).join(' ').toLowerCase();
+function normalizeClassifierResult(res) {
+  const label =
+    res?.classification != null
+      ? toSessionLabelEnum(res.classification)
+      : (res?.label || 'NORMAL');
+
+  let confidence = toConfidenceEnum(res?.confidence);
+  if (!confidence) confidence = 'LOW';
+
+  return { ...res, label, confidence };
+}
+
+// (백업) 휴리스틱: "영구 실패(대개 4xx)" 때만 사용
+function heuristicLabel(texts) {
+  const text = (texts || []).join(' ').toLowerCase();
   const hasSQLi = /('|%27|--|\bunion\b|\bselect\b|\bdrop\b|\binsert\b|\border by\b)/i.test(text);
   const hasXSS = /(<script|onerror=|onload=|<img|<iframe|javascript:)/i.test(text);
   if (hasSQLi) return 'SQL_INJECTION';
@@ -52,262 +54,158 @@ function heuristicLabel(sampleTexts) {
   return 'NORMAL';
 }
 
-// 분류 호출
-async function classifySession(aiRequests, sessionSummaryForFallback) {
+async function classifySingleLog(aiRequest, fallbackTexts = []) {
   try {
-    if (!Array.isArray(aiRequests) || aiRequests.length === 0) {
-      throw new Error('Empty aiRequests');
-    }
-    if (DEBUG_CLASSIFIER) {
-      console.log('[clf:req]', CLASSIFIER_ENDPOINT, JSON.stringify(aiRequests[0]));
-    }
-
     const { data } = await axios.post(
       CLASSIFIER_ENDPOINT,
-      { session: aiRequests },
+      { session: [aiRequest] },
       { timeout: CLASSIFIER_TIMEOUT_MS }
     );
 
-    const classificationRaw = data?.classification ?? null;
-    const label = toSessionLabelEnum(classificationRaw);
-    const confidence = toConfidenceEnum(data?.confidence);
-    const classifier_raw = data?.raw_response ?? null;
-
-    if (DEBUG_CLASSIFIER) {
-      console.log('[clf:res]', { classification: classificationRaw, label, confidence });
-    }
-    return { label, confidence, classifier_raw, classification: classificationRaw };
+    return {
+      classification: data?.classification ?? null,
+      confidence: data?.confidence ?? null,
+      classifier_raw: data?.raw_response ?? null,
+    };
   } catch (err) {
-    if (DEBUG_CLASSIFIER) {
-      const msg = err?.response
-        ? `${err.response.status} ${JSON.stringify(err.response.data)}`
-        : (err?.message || String(err));
-      console.error('[clf:error]', msg);
+    const status = err?.response?.status ?? null;
+    const msg = err?.response
+      ? `${err.response.status} ${JSON.stringify(err.response.data)}`
+      : (err?.message || String(err));
+
+    const isTimeout =
+      String(err?.code || '').toUpperCase() === 'ECONNABORTED' ||
+      /timeout/i.test(String(err?.message || ''));
+
+    const isRetryable =
+      isTimeout ||
+      status === 429 ||
+      (typeof status === 'number' && status >= 500) ||
+      status == null;
+
+    if (DEBUG_CLASSIFIER) console.error('[clf:error]', msg);
+
+    if (isRetryable) {
+      return { _retry: true, error: msg };
     }
-    const fb = heuristicLabel([
-      ...((sessionSummaryForFallback?.paths) || []),
-      ...((sessionSummaryForFallback?.samples) || [])
-    ]);
+
+    // 영구 실패(대개 4xx)면 휴리스틱으로 확정
+    const fb = heuristicLabel(fallbackTexts);
     return {
       label: fb,
       confidence: 'LOW',
       classifier_raw: null,
       classification: null,
+      error: msg,
     };
   }
 }
 
 async function run() {
-  console.log('[*] Sessionizing start');
+  console.log('[*] Single-log classification start');
 
-  // key = remote_host + agent_group
-  const active = new Map();
   let batchNo = 0;
-
-  async function flushSession(key) {
-    const s = active.get(key);
-    if (!s) return;
-
-    const summary = {
-      ip: s.remote_host ?? null,
-      user_agent: s.user_agent ?? null,
-      start_time: s.start,
-      end_time: s.end,
-      count: s.count,
-      paths: Array.from(s.paths).slice(0, 100),
-      methods: Array.from(s.methods),
-      samples: Array.from(s.samples).slice(0, 50),
-    };
-
-    // 분류기에 보낼 요청 배열 (실제 method/uri/body 기반)
-    const aiRequests = s.rawLogs.map((r) => ({
-      request_http_method: r.method || '',
-      request_http_request: r.uri || '/',
-      request_body: r.request_body || '',
-      user_agent: s.user_agent || ''
-    }));
-
-    if (aiRequests.length === 0) {
-      // 비어있는 세션은 그냥 버림
-      active.delete(key);
-      return;
-    }
-
-    const res = await classifySession(aiRequests, summary);
-    const label = res.label;
-    const confidence = res.confidence;
-    const classifier_raw = res.classifier_raw;
-    const classification = res.classification;
-
-    // 세션 ID(결정적): ip + agent + start
-    const sessionIdStr = `${s.remote_host || 'NA'}|${s.agent_group}|${s.start.toISOString()}`;
-
-    await prisma.$transaction(async (tx) => {
-      const sess = await tx.session.upsert({
-        where: { session_id: sessionIdStr },
-        update: {
-          end_time: s.end,
-          ip_address: s.remote_host ?? null,
-          user_agent: s.user_agent ?? null,
-          label,
-          confidence,
-          classifier_raw,
-          classification,
-        },
-        create: {
-          session_id: sessionIdStr,
-          ip_address: s.remote_host ?? null,
-          user_agent: s.user_agent ?? null,
-          start_time: s.start,
-          end_time: s.end,
-          label,
-          confidence,
-          classifier_raw,
-          classification,
-        },
-        select: { id: true }
-      });
-
-      if (s.rawLogIds.length) {
-        await tx.rawLog.updateMany({
-          where: { id: { in: s.rawLogIds } },
-          data:  { sessionId: sess.id },
-        });
-      }
-    });
-
-    active.delete(key);
-  }
+  let lastId = 0;
 
   while (true) {
     batchNo += 1;
 
-    // ➜ 크래시 내성을 위해 lastId 조건 제거
-    // "아직 세션 할당 안 된 + 비차단(non-disruptive)" 로그만 매번 가장 오래된 것부터 처리
+    // ✅ PASSed-by-ModSecurity 조건:
+    // - audit_data.action.intercepted != true
+    // - response.status not in (403,406)
+    // - messages에 "access denied with code" 포함되지 않음
     const rows = await prisma.$queryRaw`
       SELECT
         r.id,
         r.timestamp,
         r.remote_host,
-        r.remote_port,
         r.user_agent,
         r.method,
         r.uri,
         r.request_body,
-        r.matched_rules,
-        r.audit_summary,
         r.full_log
       FROM "RawLog" r
       WHERE r."sessionId" IS NULL
-        AND NOT (
-          -- ① 확정: transaction.interruption 존재 → 실제 차단
-          COALESCE(r.full_log->'transaction', '{}'::jsonb) ? 'interruption'
-          -- ② 보조: 개별 룰이 disruptive였거나, Access denied 문구가 남은 경우
-          OR EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements(COALESCE(r.matched_rules, '[]'::jsonb)) AS m
-            WHERE (m->'details'->>'disruptive')::boolean = true
-               OR COALESCE(m->>'message', m->>'msg','') ILIKE '%Access denied with code%'
-          )
-        )
+        AND r.id > ${lastId}
+        AND COALESCE((r.full_log->'audit_data'->'action'->>'intercepted')::boolean, false) = false
+        AND COALESCE((r.full_log->'response'->>'status')::int, 200) NOT IN (403, 406)
+        AND NOT (r.full_log::text ILIKE '%access denied with code%')
       ORDER BY r.id ASC
       LIMIT ${BATCH_SIZE}
     `;
 
-    if (rows.length === 0) break;
+    if (!Array.isArray(rows) || rows.length === 0) break;
 
-    const lastRowTs = rows[rows.length - 1].timestamp;
-    const batchLastTs = lastRowTs instanceof Date ? lastRowTs : new Date(lastRowTs);
+    lastId = rows[rows.length - 1].id;
 
     for (const r of rows) {
       const t = r.timestamp instanceof Date ? r.timestamp : new Date(r.timestamp);
       if (Number.isNaN(t.getTime())) continue;
 
       const ua = r.user_agent || '';
-      const agent_group = makeAgentGroup(ua);
 
-      // 세션 키: remote_host + agent_group
-      const key = `${r.remote_host || 'NA'}|${agent_group}`;
+      const aiRequest = {
+        request_http_method: (r.method || '').slice(0, 16),
+        request_http_request: (r.uri || '/').slice(0, 2048),
+        request_body: (r.request_body || '').slice(0, MAX_BODY_CHARS),
+        user_agent: ua.slice(0, MAX_UA_CHARS),
+      };
 
-      let s = active.get(key);
-      if (!s) {
-        s = {
-          remote_host: r.remote_host ?? null,
-          user_agent: ua || null,
-          agent_group,
-          start: t,
-          end: t,
-          lastSeen: t,
-          count: 0,
-          paths: new Set(),
-          methods: new Set(),
-          samples: new Set(),
-          preview: [],
-          rawLogIds: [],
-          rawLogs: [],
-        };
-        active.set(key, s);
+      const fallbackTexts = [
+        `${r.method || ''} ${r.uri || ''}`.trim(),
+        String(r.request_body || '').slice(0, 500),
+      ];
+
+      const res0 = await classifySingleLog(aiRequest, fallbackTexts);
+
+      // ✅ HF/AI 일시 장애면 sessionId를 채우지 않고 다음 루프에서 재시도
+      if (res0?._retry) {
+        if (DEBUG_CLASSIFIER) console.log('[clf:retry]', { rawlog_id: r.id, error: res0.error });
+        continue;
       }
 
-      // 타임아웃으로 세션 절단
-      const gapMs = t.getTime() - s.lastSeen.getTime();
-      if (gapMs > INACTIVITY_MINUTES * 60 * 1000) {
-        await flushSession(key);
-        s = {
-          remote_host: r.remote_host ?? null,
-          user_agent: ua || null,
-          agent_group,
-          start: t,
-          end: t,
-          lastSeen: t,
-          count: 0,
-          paths: new Set(),
-          methods: new Set(),
-          samples: new Set(),
-          preview: [],
-          rawLogIds: [],
-          rawLogs: [],
-        };
-        active.set(key, s);
-      }
+      const res = normalizeClassifierResult(res0);
 
-      // 세션 누적
-      s.end = t;
-      s.lastSeen = t;
-      s.count += 1;
-      if (r.uri) s.paths.add(r.uri);
-      if (r.method) s.methods.add(r.method);
-      const snippet = `${r.method || ''} ${r.uri || ''} ${(r.request_body || '').slice(0, 200)}`.trim();
-      if (snippet) s.samples.add(snippet);
-      s.rawLogIds.push(r.id);
-      s.rawLogs.push({
-        method: r.method,
-        uri: r.uri,
-        request_body: r.request_body,
+      const sessionIdStr = `log|${r.id}`;
+
+      await prisma.$transaction(async (tx) => {
+        const sess = await tx.session.upsert({
+          where: { session_id: sessionIdStr },
+          update: {
+            start_time: t,
+            end_time: t,
+            ip_address: r.remote_host ?? null,
+            user_agent: ua || null,
+            label: res.label,
+            confidence: res.confidence,
+            classifier_raw: res.classifier_raw,
+            classification: res.classification,
+          },
+          create: {
+            session_id: sessionIdStr,
+            ip_address: r.remote_host ?? null,
+            user_agent: ua || null,
+            start_time: t,
+            end_time: t,
+            label: res.label,
+            confidence: res.confidence,
+            classifier_raw: res.classifier_raw,
+            classification: res.classification,
+          },
+          select: { id: true },
+        });
+
+        await tx.rawLog.update({
+          where: { id: r.id },
+          data: { sessionId: sess.id },
+        });
       });
     }
 
-    // 배치 경계에서 닫힌 세션 flush
-    const WINDOW_MS = INACTIVITY_MINUTES * 60 * 1000;
-    for (const key of Array.from(active.keys())) {
-      const s = active.get(key);
-      if (!s) continue;
-      if (batchLastTs.getTime() - s.lastSeen.getTime() >= WINDOW_MS) {
-        await flushSession(key);
-      }
-    }
-
-    console.log(
-      `[*] batch=${batchNo}, processed+=${rows.length}, active=${active.size}`
-    );
+    console.log(`[*] batch=${batchNo}, processed+=${rows.length}`);
   }
 
-  // 남은 세션 전부 flush
-  for (const key of Array.from(active.keys())) {
-    await flushSession(key);
-  }
-
-  console.log('[*] Sessionizing done.');
+  console.log('[*] Single-log classification done.');
 }
 
 run()
@@ -318,3 +216,8 @@ run()
   .finally(async () => {
     await prisma.$disconnect();
   });
+
+
+
+
+

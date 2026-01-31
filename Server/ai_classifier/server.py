@@ -1,4 +1,4 @@
-# server.py (수정된 최종 버전)
+# server.py (single-log first, compatible with sessionizing.js + model_inference.py)
 
 import os
 import asyncio
@@ -12,7 +12,7 @@ from model_inference import MistralClassifier
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 
-SESSION_MAX_REQ_DEFAULT = "20"   # ⭐ 세션 내 요청 최대 반영 수 확대
+SESSION_MAX_REQ_DEFAULT = "20"  # 세션 내 요청 최대 반영 수(다중 요청 들어올 때만 사용)
 
 app = FastAPI()
 clf: Optional[MistralClassifier] = None
@@ -32,51 +32,28 @@ class AIRequest(BaseModel):
 
 
 # ===================================================================
-# ⭐ 핵심: sessionizing.js는 "세션 요청 배열"을 보내고,
-#    model_inference.py는 "텍스트 한 덩어리"만 받음.
-#
-#    => 둘 사이를 잇는 역할이 build_session_text
+# (옵션) 다중 요청이 들어올 때만 사용하는 "세션 텍스트" 구성
+# - 단일로그 모드에서는 보통 사용하지 않음
 # ===================================================================
 def build_session_text(items: List[AIItem]) -> str:
-    """
-    세션 요청들을 사람이 읽기 좋고 LLM이 분석하기 좋은 형태로 변환한다.
-    목적:
-      - 공격 패턴(SQLi, Path traversal, XSS 등)을 명확하게 드러내기
-      - ModSecurity가 놓친 공격을 AI가 쉽게 판단하도록 돕기
-    """
-
     max_req = int(os.getenv("SESSION_MAX_REQ", SESSION_MAX_REQ_DEFAULT))
-    lines = []
+    lines: List[str] = []
 
-    # ===== 헤더 =====
-    lines.append("You are a web security classifier. Analyze the following HTTP requests as ONE session.")
-    lines.append("Decide if this session contains: SQL injection, Path traversal, Code injection, Normal (benign), or other Attack.")
-    lines.append("Provide a clear judgment.\n")
-
-    # ===== 요청들 처리 =====
+    # model_inference.py 자체가 라벨을 강제하는 프롬프트를 이미 갖고 있으므로
+    # 여기서는 과도한 지시문을 넣기보다 "관측 데이터" 위주로만 구성
     for idx, it in enumerate(items[:max_req], start=1):
         method = (it.request_http_method or "").strip().upper()
         path = (it.request_http_request or "").strip()
         body = (it.request_body or "").strip()
         ua = (it.user_agent or "").strip()
 
-        # ⭐ 공격 탐지를 위한 최대한 풍부한 정보 제공
-        req_block = []
-        req_block.append(f"[{idx}] METHOD: {method}")
-        req_block.append(f"PATH: {path}")
-
-        if body:
-            # BODY는 너무 길면 LLM 처리에 부담 → 300자 정도 제한
-            req_block.append(f"BODY: {body[:300]}")
-
+        lines.append(f"[{idx}] {method} {path}")
         if ua:
-            req_block.append(f"USER-AGENT: {ua[:120]}")
-
-        # Multi-line request block
-        lines.append("\n".join(req_block))
+            lines.append(f"User-Agent: {ua[:120]}")
+        if body:
+            lines.append(f"Body: {body[:300]}")
         lines.append("----")
 
-    # 최종 텍스트 생성
     return "\n".join(lines)
 
 
@@ -84,8 +61,7 @@ def build_session_text(items: List[AIItem]) -> str:
 @app.on_event("startup")
 async def startup():
     global clf, ready
-
-    clf = MistralClassifier()   # HF endpoint classifier
+    clf = MistralClassifier()
     ok = clf.load_model()
     ready = bool(ok)
     print("[init] ready =", ready)
@@ -107,26 +83,35 @@ def readyz():
 async def classify(req: AIRequest):
     if not ready:
         raise HTTPException(status_code=503, detail="model_not_ready")
-
     if not req.session:
         raise HTTPException(status_code=400, detail="empty_session")
 
-    # ⭐ 세션 배열 → LLM 입력용 문자열 변환
-    session_text = build_session_text(req.session)
+    # ✅ 단일로그 우선: sessionizing.js는 보통 길이 1로 보냄
+    first = req.session[0]
+    method = (first.request_http_method or "").strip() or "GET"
+    path = (first.request_http_request or "").strip() or "/"
+    body = (first.request_body or "") or ""
+
+    # 혹시 다중 요청이 들어오면(예: 나중에 실험 확장) 세션 텍스트로 합쳐서 처리
+    if len(req.session) > 1:
+        body = build_session_text(req.session)
+        method = "SESSION"
+        path = "/session"
 
     # 하나씩 처리 (LLM concurrency 제한)
     async with lock:
-        result = clf.predict("SESSION", session_text, "")
+        result = clf.predict(method, path, body)
 
     # model_inference.py가 반환하는 구조 그대로 사용
     classification = result.get("classification", "Normal")
     confidence = result.get("confidence", "low")
     raw = result.get("raw_response", "")
 
+    # sessionizing.js는 classification/confidence/raw_response만 써도 충분
     return {
         "classification": classification,
         "confidence": confidence,
-        "raw_response": raw
+        "raw_response": raw,
     }
 
 
