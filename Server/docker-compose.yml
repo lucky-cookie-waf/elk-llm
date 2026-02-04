@@ -132,25 +132,19 @@ services:
 
   gen_rule:
     build:
-      context: ./gen_rule             # ⬅️ gen_rule만 컨텍스트
+      ontext: ./gen_rule
       dockerfile: Dockerfile
     container_name: gen_rule
     restart: "no"
     env_file:
       - ./gen_rule/.env
-    #environment:
-      #DATABASE_URL: postgresql://luckycookie:luckycookie@postgres:5432/modsec_logs
     networks:
       - web-network
-    #depends_on:
-      #postgres:
-        #condition: service_healthy
     volumes:
-      # 개발 편의를 원하면 켜고, 이미지 산출물 그대로 쓰려면 끄세요.
-      - ./gen_rule:/app/gen_rule
-      - ./rules:/app/rules
-    working_dir: /app/gen_rule
-    command: ["python", "-u", "main.py"]  # ⬅️ gen_rule은 main.py만 실행
+      - ./rules_out:/rules
+    working_dir: /app
+    command: ["python", "-u", "-m", "src.main"]
+
 
   ai_classifier:
     build:
