@@ -1,16 +1,17 @@
 """
 Conservative False Positive Filter
-보수적 필터 - 명백한 정상 패턴만 처리 (8건)
+보수적 필터 - 404 응답 + 정상 패턴 처리
 
 필터링 대상:
+- 404 응답을 받은 모든 공격 페이로드 (서버가 거부한 요청)
 - SSRF 시도 (owasp.org, 외부 도메인)
 - 경로 구분자 혼용 (c://, ///, \\)
 - 이상한 경로 패턴
 - 템플릿 변수
 
-필터링 제외:
-- etc/passwd, sleep(), cat, <script> 등 명백한 공격 페이로드
-  → AI 판단 유지 (정확한 탐지)
+논리:
+- 공격 페이로드가 있어도 404 응답을 받았다면 실제 위협이 성공하지 않음
+  → Normal로 처리 (결과적으로 무해)
 """
 
 import re
@@ -37,9 +38,19 @@ class ConservativeFilter:
             # 이상한 경로
             r'^/thishouldnotexist',
             r'^/%7[Cc]/',               # /|/
+            r'/\|/',                     # /|/
 
             # 템플릿 변수
             r'\{\{\s*data\.model',
+            r'\{\{\s*data\.url',
+
+            # 정상 파일 확장자
+            r'\.tar$',
+            r'\.tmp$',
+
+            # 외부 도메인 + feed
+            r'google\.com.*\/feed',
+            r'www\.[a-z]+\.com.*\/feed',
         ]
 
         self.compiled_patterns = [
@@ -92,9 +103,9 @@ class ConservativeFilter:
         if ai_prediction.lower() in ['normal', 'normal (benign)']:
             return ai_prediction
 
-        # 명백한 공격 페이로드는 필터링하지 않음
-        if self.has_attack_payload(path):
-            return ai_prediction
+        # 404 + 명백한 공격 페이로드 → Normal 처리 (서버가 거부함)
+        if status_code == 404 and self.has_attack_payload(path):
+            return "Normal (benign)"
 
         # 화이트리스트 패턴이고 404면 Normal로 변환
         if self.is_safe_pattern(path) and status_code == 404:
