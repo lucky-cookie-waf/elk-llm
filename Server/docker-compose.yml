@@ -132,7 +132,7 @@ services:
 
   gen_rule:
     build:
-      ontext: ./gen_rule
+      context: ./gen_rule
       dockerfile: Dockerfile
     container_name: gen_rule
     restart: "no"
