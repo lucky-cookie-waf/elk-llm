@@ -15,7 +15,7 @@ app.use(require('./routes/rules'));
 app.use(require('./routes/dashboard')); // 대시보드 API
 
 app.use('/session', require('./routes/session'));
-app.use('/rawlog', require('./routes/rawlog'));
+//app.use('/rawlog', require('./routes/rawlog'));
 
 app.get('/healthz', (_req, res) => res.json({ ok: true }));
 
