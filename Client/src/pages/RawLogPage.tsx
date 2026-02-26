@@ -57,6 +57,7 @@ export default function RawLogPage() {
   const [rows, setRows] = useState<RawLogRow[]>([]);
   const [connected, setConnected] = useState<null | boolean>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [expandedBody, setExpandedBody] = useState<string | null>(null);
 
   useEffect(() => {
     setRows([]);
@@ -208,11 +209,24 @@ export default function RawLogPage() {
             {columns.map((c) => {
               const raw = (row as any)[c.key];
               const val = c.render ? c.render(row) : raw ?? "-";
+              const isRequestBody = c.key === "request_body";
               return (
                 <div
                   key={String(c.key)}
-                  style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: c.min + 200 }}
+                  style={{
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    maxWidth: c.min + 200,
+                    cursor: isRequestBody && val !== "-" ? "pointer" : "default",
+                    color: isRequestBody && val !== "-" ? "#7dd3fc" : undefined,
+                  }}
                   title={typeof val === "string" ? val : undefined}
+                  onClick={
+                    isRequestBody && val !== "-"
+                      ? () => setExpandedBody(String(raw ?? val ?? ""))
+                      : undefined
+                  }
                 >
                   {String(val ?? "-")}
                 </div>
@@ -221,6 +235,69 @@ export default function RawLogPage() {
           </div>
         ))}
       </div>
+
+      {expandedBody && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(0,0,0,0.65)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            zIndex: 9999,
+            padding: 24,
+          }}
+          onClick={() => setExpandedBody(null)}
+        >
+          <div
+            style={{
+              background: "#0b1220",
+              border: "1px solid #1f2937",
+              borderRadius: 12,
+              padding: 16,
+              maxWidth: "80vw",
+              maxHeight: "80vh",
+              width: "700px",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.45)",
+              overflow: "hidden",
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <strong style={{ fontSize: 16 }}>Request Body</strong>
+              <button
+                onClick={() => setExpandedBody(null)}
+                style={{
+                  background: "#1f2937",
+                  color: "#e5e7eb",
+                  border: "1px solid #374151",
+                  borderRadius: 6,
+                  padding: "4px 10px",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <pre
+              style={{
+                background: "#111827",
+                color: "#e5e7eb",
+                padding: 12,
+                borderRadius: 8,
+                maxHeight: "70vh",
+                overflow: "auto",
+                whiteSpace: "pre-wrap",
+                wordBreak: "break-all",
+              }}
+            >
+              {expandedBody}
+            </pre>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
