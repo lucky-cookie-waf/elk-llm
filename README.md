@@ -1,9 +1,19 @@
+
 1. 사이드 바 크기(넓이 조정, 디자인 조정)
-2. 로그 리스트 표시 항목 수정, 정렬 조정, URI, user agent 더보기 기능
-3. 로그리스트 order 모달 크기, 정렬 수정
-4. 룰셋 관리 테이블 정렬, 항목 수정
-5. 로그인, 로그아웃 페이지 생성
-6. 전체적인 디자인 통일
+2. 로그 리스트 표시 항목 수정, 정렬
+3. 조정, URI, user agent 더보기 기능
+4. 로그리스트 order 모달 크기, 정렬 수정
+5. 룰셋 관리 테이블 정렬, 항목 수정
+6. 로그인, 로그아웃 페이지 생성
+7. 전체적인 디자인 통일
+
+https://github.com/user-attachments/assets/fd711923-41ab-445d-85a3-f33a99e61640
+
+
+https://github.com/user-attachments/assets/21e4d57d-7597-4f11-ad1e-c92a9378d783
+
+
+
 
 Client
 1. npm install로 node_modules(크기 너무 커서 git에 안 올라감) 생성
