@@ -6,10 +6,41 @@ https://github.com/user-attachments/assets/21e4d57d-7597-4f11-ad1e-c92a9378d783
 
 
 
+## 실행 방법
 
-Client
-1. npm install로 node_modules(크기 너무 커서 git에 안 올라감) 생성
-2. npm start
+**서버(백엔드)**  
+- `cd Server`
+- 한 번 빌드/실행: `docker compose up -d --build`  
+  (이미지 최신화 필요 없으면 `docker compose up -d`만)
+- 상태 확인: `docker compose ps`
+- 종료: `docker compose down` (볼륨 유지), 완전 초기화 `docker compose down -v`
+
+**클라이언트(프론트)**  
+- `cd Client`
+- 최초 의존성 설치: `npm install`
+- 개발 서버: `npm start`  (기본 http://localhost:3000)
+
+필수 전제  
+- Docker Desktop + WSL 통합 켜짐  
+- 포트 8080(모의 웹앱), 3001(API), 3002(모델), 3000(프론트) 사용 가능해야 함.
+
+순서대로 서버 먼저 올리고, 헬스 체크 후 클라이언트 띄우면 실행됨.
+
+
+## 오류
+- 낡은 이미지/캐시:
+      코드 바꿨는데 docker compose up -d만 해서 오래된 이미지로 뜨면, 이번처럼 모듈 누락·의존성 불일치가 납니다. 해결: 필요한 서비스만 docker compose build <svc> 후 up -d.
+- 마운트/경로 누락:
+      Dockerfile에서 소스 COPY 경로나 볼륨이 잘못돼 새 파일이 이미지에 안 들어가면 런타임에 MODULE_NOT_FOUND/ENOENT 터집니다. 변경한 폴더가 COPY 대상인지 확인.
+- 환경변수 불일치:
+      .env.shared나 서비스별 .env 값이 최신이 아니면 DB/HF 엔드포인트 연결 실패로 헬스체크가 계속 실패할 수 있습니다. 변경 후 up -d 재시작 필요.
+- 포트 충돌:
+      3001/3002/8080 등을 다른 프로세스가 사용하면 서비스가 곧바로 종료되거나 502/ECONNREFUSED가 납니다. netstat -ano(Windows)로 점검.
+- DB 스키마 미반영:
+      Prisma 스키마 업데이트 후 prisma generate/db push 없이 컨테이너만 올리면 쿼리 에러가 납니다. 스키마 바꿨으면 docker compose run --rm prisma-runner npx prisma db push.
+- WSL/네트워크 문제:
+      WSL 통합이 꺼지거나 VPN/회사 방화벽이 Supabase/HF 등 외부 주소를 막으면 서비스 헬스가 계속 떨어집니다. WSL 상태(wsl --status)와 네트워크 허용 여부 확인.
+
 
 ## ModSecurity + PostgreSQL + 세션화
 이 프로젝트는 ModSecurity 로그를 수집하여 PostgreSQL 데이터베이스에 저장하고, 저장된 로그들을 세션 단위로 그룹화(sessionizing) 하는 Node.js 기반 시스템입니다.
