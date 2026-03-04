@@ -19,6 +19,7 @@ clf: Optional[MistralClassifier] = None
 ready: bool = False
 lock = asyncio.Lock()
 
+
 # ===== 입력 스키마 =====
 class AIItem(BaseModel):
     request_http_method: Optional[str] = ""
@@ -118,4 +119,5 @@ async def classify(req: AIRequest):
 # ===== Local Dev =====
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("server:app", host="0.0.0.0", port=3002, workers=1)
