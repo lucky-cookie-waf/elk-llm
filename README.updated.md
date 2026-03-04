@@ -10,6 +10,14 @@ ModSecurity에서 수집한 HTTP 요청 로그를 저장하고, AI 기반 분류
 4. 분류 결과는 `Session` 테이블에 저장됩니다.
 5. `gen_rule`이 라벨링된 공격 세션을 읽어 ModSecurity `SecRule`을 생성합니다.
 
+## Demo
+
+https://github.com/user-attachments/assets/fd711923-41ab-445d-85a3-f33a99e61640
+
+https://github.com/user-attachments/assets/21e4d57d-7597-4f11-ad1e-c92a9378d783
+
+https://github.com/user-attachments/assets/d236cf9e-f251-4561-beb1-e1ea30ac8866
+
 ## Architecture
 
 ```text
@@ -76,6 +84,28 @@ Server/
 - 외부 API/LLM 키
   - Hugging Face Inference Endpoint
   - Anthropic API Key
+
+## 실행 방법
+
+**서버(백엔드)**
+- `cd Server`
+- 한 번 빌드/실행: `docker compose up -d --build`
+  - 이미지 최신화 필요 없으면 `docker compose up -d`
+- 상태 확인: `docker compose ps`
+- 종료: `docker compose down`
+  - 볼륨 유지
+- 완전 초기화: `docker compose down -v`
+
+**클라이언트(프론트)**
+- `cd Client`
+- 최초 의존성 설치: `npm install`
+- 개발 서버: `npm start`
+  - 기본 주소는 `http://localhost:3000`
+
+필수 전제
+- Docker Desktop + WSL 통합이 켜져 있어야 합니다.
+- `8080`, `3001`, `3002`, `3000` 포트를 사용할 수 있어야 합니다.
+- 서버를 먼저 올리고 헬스 체크 후 클라이언트를 실행하는 순서를 권장합니다.
 
 ## Environment Variables
 
@@ -316,6 +346,27 @@ docker compose up -d ai_classifier
 ```bash
 docker compose --profile localdb up -d --build
 ```
+
+## 오류
+
+- 낡은 이미지/캐시:
+  - 코드를 바꿨는데 `docker compose up -d`만 해서 오래된 이미지로 뜨면 모듈 누락이나 의존성 불일치가 날 수 있습니다.
+  - 해결: 필요한 서비스만 `docker compose build <svc>` 후 `docker compose up -d <svc>`
+- 마운트/경로 누락:
+  - Dockerfile의 `COPY` 경로나 볼륨 설정이 잘못되면 새 파일이 이미지에 들어가지 않아 런타임에 `MODULE_NOT_FOUND` 또는 `ENOENT`가 발생할 수 있습니다.
+  - 해결: 변경한 폴더가 실제 `COPY` 대상인지 확인
+- 환경변수 불일치:
+  - `.env.shared`나 서비스별 `.env` 값이 최신이 아니면 DB 또는 외부 엔드포인트 연결 실패로 헬스체크가 계속 실패할 수 있습니다.
+  - 해결: 환경변수 변경 후 `docker compose up -d`로 재시작
+- 포트 충돌:
+  - `3001`, `3002`, `8080` 등을 다른 프로세스가 사용하면 서비스가 바로 종료되거나 `502`, `ECONNREFUSED`가 발생할 수 있습니다.
+  - 해결: Windows에서는 `netstat -ano`로 점검
+- DB 스키마 미반영:
+  - Prisma 스키마 변경 후 `prisma generate` 또는 `db push` 없이 컨테이너만 올리면 쿼리 에러가 날 수 있습니다.
+  - 해결: 스키마를 바꿨다면 `docker compose run --rm prisma-runner npx prisma db push`
+- WSL/네트워크 문제:
+  - WSL 통합이 꺼져 있거나 VPN, 회사 방화벽이 Supabase, Hugging Face 같은 외부 주소를 막으면 서비스 헬스가 계속 떨어질 수 있습니다.
+  - 해결: `wsl --status`와 네트워크 허용 여부 확인
 
 ## Troubleshooting
 
