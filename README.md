@@ -1,8 +1,4 @@
-
-https://github.com/user-attachments/assets/fd711923-41ab-445d-85a3-f33a99e61640
-
-
-https://github.com/user-attachments/assets/21e4d57d-7597-4f11-ad1e-c92a9378d783
+## 시연 영상
 
 
 https://github.com/user-attachments/assets/d236cf9e-f251-4561-beb1-e1ea30ac8866
