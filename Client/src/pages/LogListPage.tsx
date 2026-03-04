@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 
 /* ========== time helpers ========== */
 const pad2 = (n: number) => String(n).padStart(2, "0");
@@ -235,6 +235,7 @@ function mapRow(item: SessionRowFromAPI): LogItem {
 
 /* ========== Page ========== */
 export default function LogListPage() {
+  const location = useLocation();
   /* 초기 상태 */
   const initialOrder: OrderType = "latest";
   const initialStatuses = new Set<Status>();
@@ -247,7 +248,7 @@ export default function LogListPage() {
   const [connected, setConnected] = useState<null | boolean>(null);
 
   // 공통 fetch 함수: /api 실패 시 / 로 재시도
-  const fetchSessions = async () => {
+  const fetchSessions = useCallback(async () => {
     const qs = "label=NORMAL&page=1&pageSize=100&sort=end_time&order=desc";
     const tryFetch = async (url: string) => {
       const res = await fetch(url);
@@ -272,11 +273,11 @@ export default function LogListPage() {
       setRows([]);
       setConnected(false);
     }
-  };
+  }, [setRows, setConnected]);
 
   useEffect(() => {
     fetchSessions();
-  }, []);
+  }, [fetchSessions, location.key]);
 
   /* 검색 */
   const [q, setQ] = useState(initialQuery);

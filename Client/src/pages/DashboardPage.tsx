@@ -230,12 +230,15 @@ const Popup: React.FC<{
   );
 };
 
-/* -------------------- YearPicker -------------------- */
+/* -------------------- YearPicker (수정됨) -------------------- */
 const YearPicker: React.FC<{ value: number; onChange: (v: number) => void }> = ({
   value,
   onChange,
 }) => {
-  const years = [2025, 2024, 2023, 2022, 2021, 2020];
+  const currentYear = new Date().getFullYear();
+  const startYear = 2020;
+  const years = Array.from({ length: currentYear - startYear + 1 }, (_, i) => currentYear - i);
+  
   return (
     <select
       value={value}
@@ -340,8 +343,11 @@ const MiniCalendar: React.FC<MiniCalendarProps> = ({
   );
 };
 
-/* -------------------- Main -------------------- */
-const clampYear = (y: number) => Math.max(2020, Math.min(2025, y));
+/* -------------------- Main (수정됨) -------------------- */
+const clampYear = (y: number) => {
+  const currentYear = new Date().getFullYear();
+  return Math.max(2020, Math.min(currentYear, y));
+};
 
 const DashboardPage: React.FC = () => {
   // 공통 상태
